@@ -9,8 +9,12 @@ namespace music
 constexpr int kNumKeys = 12;
 constexpr const char* keyNames[kNumKeys] = { "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B" };
 
-// The root of the key is played in this octave: key 0 (C) is MIDI note 60, C4.
-constexpr int kRootNote = 60;
+// Octaves are numbered so that C4 is MIDI note 60. The top of the range keeps every scale note below 127.
+constexpr int kMinOctave = 0;
+constexpr int kMaxOctave = 7;
+constexpr int kDefaultOctave = 4;
+
+constexpr int noteNumber (int key, int octave, int interval) { return 12 * (octave + 1) + key + interval; }
 
 struct Scale
 {
@@ -78,9 +82,48 @@ constexpr const char* arpDirectionNames[numArpDirections] = { "Up",
                                                              "Converge",
                                                              "Diverge" };
 
+enum ArpReset { followTimeline, restartOnPlay, numArpResets };
+constexpr const char* arpResetNames[numArpResets] = { "Follow timeline", "Restart on play" };
+
+// The distance between two steps, in quarter notes. Triplets are 2/3 of the straight value.
+constexpr int kNumStepRates = 9;
+constexpr int kDefaultStepRate = 4; // 1/8
+constexpr const char* stepRateNames[kNumStepRates] = { "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1/1" };
+constexpr double stepRateQuarters[kNumStepRates] = { 0.125, 1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 2.0, 4.0 };
+
 constexpr int kNumNoteLengths = 6;
 constexpr const char* noteLengthNames[kNumNoteLengths] = { "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" };
 constexpr double noteLengthQuarters[kNumNoteLengths] = { 0.125, 0.25, 0.5, 1.0, 2.0, 4.0 };
+
+// A small random number generator (splitmix64) that is cheap to create, so every step can have its own. With a
+// fixed seed the numbers of a step depend only on the seed and the step number: the same step plays the same
+// thing in every loop, and after every restart.
+struct StepRandom
+{
+    std::uint64_t state;
+
+    static constexpr std::uint64_t golden = 0x9e3779b97f4a7c15;
+    static constexpr std::uint64_t stepMultiplier = 0xd1342543de82ef95;
+    static constexpr std::uint64_t mixA = 0xbf58476d1ce4e5b9;
+    static constexpr std::uint64_t mixB = 0x94d049bb133111eb;
+
+    static constexpr StepRandom forStep (int seed, std::int64_t step)
+    {
+        return { (std::uint64_t) seed * golden ^ (std::uint64_t) step * stepMultiplier };
+    }
+
+    constexpr std::uint64_t next()
+    {
+        state += golden;
+        std::uint64_t z = state;
+        z = (z ^ (z >> 30)) * mixA;
+        z = (z ^ (z >> 27)) * mixB;
+        return z ^ (z >> 31);
+    }
+
+    // 0 .. n-1
+    constexpr int nextInt (int n) { return (int) ((next() >> 33) % (std::uint64_t) n); }
+};
 
 // Index into the pool of `size` notes (0 is the lowest) for arp step number `step`, which counts up forever.
 // Every direction is a cycle over the pool, so the pattern is fixed by the step number alone.

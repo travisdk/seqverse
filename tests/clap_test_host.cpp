@@ -34,6 +34,7 @@ constexpr uint32_t samplesPerQuarter = sampleRate * 60 / 120;
 constexpr uint32_t step = samplesPerQuarter / 2; // the plugin's step grid: 1/8th
 constexpr uint32_t oneBar = 188;                 // blocks: 96256 samples, eight steps and a bit
 constexpr uint32_t neverStop = UINT32_MAX;
+constexpr int cMajor[7] = { 0, 2, 4, 5, 7, 9, 11 }; // written out here on purpose, apart from music::scales
 
 int failures = 0;
 bool everyBlockOk = true;
@@ -310,6 +311,7 @@ struct Note
 {
     int note;
     uint32_t time;
+    int velocity = 0; // only filled in by notesOf, and not compared by sameNotes
 };
 
 // Note-ons (status 0x90) or note-offs (0x80) among the events, in the order they came out.
@@ -318,7 +320,25 @@ std::vector<Note> notesOf (const std::vector<clap_event_midi_t>& events, uint8_t
     std::vector<Note> result;
     for (const auto& e : events)
         if ((e.data[0] & 0xF0) == status)
-            result.push_back ({ e.data[1], e.header.time });
+            result.push_back ({ e.data[1], e.header.time, e.data[2] });
+    return result;
+}
+
+// True when there are events and all of them are on the given MIDI channel (1 to 16).
+bool allOnChannel (const std::vector<clap_event_midi_t>& events, int channel)
+{
+    bool ok = ! events.empty();
+    for (const auto& e : events)
+        ok &= (e.data[0] & 0x0F) == channel - 1;
+    return ok;
+}
+
+// The note numbers only, for comparing two runs.
+std::vector<int> noteNumbers (const std::vector<Note>& notes)
+{
+    std::vector<int> result;
+    for (const auto& n : notes)
+        result.push_back (n.note);
     return result;
 }
 
@@ -473,7 +493,6 @@ int main (int argc, char** argv)
 
     std::printf ("arp directions over C major (7 notes)\n");
     {
-        constexpr int cMajor[7] = { 0, 2, 4, 5, 7, 9, 11 };
         struct Pattern { int direction; std::vector<int> indices; };
         const Pattern patterns[] = {
             { music::up,        { 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6 } },
@@ -534,7 +553,7 @@ int main (int argc, char** argv)
             {
                 bool inScale = false;
                 for (int k = 0; k < music::scales[i].size; ++k)
-                    inScale |= n.note == music::kRootNote + key + music::scales[i].intervals[k];
+                    inScale |= n.note == music::noteNumber (key, music::kDefaultOctave, music::scales[i].intervals[k]);
                 ok &= inScale;
             }
 
@@ -555,6 +574,107 @@ int main (int argc, char** argv)
         check (run (s).empty(), "no notes at all, and the MIDI input is not passed on");
     }
 
+    std::printf ("step rate\n");
+    {
+        Scenario s;
+        s.params = { { "Step Rate", "1/4" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67 }, 0, 2 * step)), "1/4: a note every 24000 samples");
+
+        s.params = { { "Step Rate", "1/8T" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62, 64, 65, 67, 69 }, 0, 8000)),
+               "1/8T: a note every 8000 samples");
+    }
+
+    std::printf ("octave range\n");
+    {
+        Scenario s;
+        s.params = { { "Low Octave", "3" }, { "High Octave", "5" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 48, 50, 52, 53, 55, 57, 59, 60, 62 }, 0)),
+               "octaves 3 to 5: the arp starts in octave 3 and climbs into 4");
+
+        s.params = { { "Low Octave", "6" }, { "High Octave", "4" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 74 }, 0)),
+               "low above high: the range is 4 to 6 anyway");
+    }
+
+    std::printf ("velocity, variation and channel\n");
+    {
+        Scenario s;
+        s.params = { { "Velocity", "64" } };
+        bool all64 = true;
+        for (const auto& n : notesOf (run (s), 0x90))
+            all64 &= n.velocity == 64;
+        check (all64, "every note has the velocity that was set");
+
+        s.params = { { "Velocity", "120" }, { "Velocity Variation", "20" } };
+        s.numBlocks = 750;
+        bool inRange = true;
+        std::vector<int> distinct;
+        for (const auto& n : notesOf (run (s), 0x90))
+        {
+            inRange &= n.velocity >= 100 && n.velocity <= 127;
+            if (std::find (distinct.begin(), distinct.end(), n.velocity) == distinct.end())
+                distinct.push_back (n.velocity);
+        }
+        check (inRange, "120 plus or minus 20 stays within 100 and the MIDI maximum 127");
+        check (distinct.size() >= 5, "and the velocities do vary");
+
+        s = Scenario();
+        s.params = { { "Channel", "10" } };
+        check (allOnChannel (run (s), 10), "all notes, on and off, are on channel 10");
+    }
+
+    std::printf ("swing: every second step comes late\n");
+    {
+        Scenario s;
+        s.params = { { "Swing", "100" } }; // 100 %: a third of a step, 4000 samples at 1/8
+        std::vector<Note> want;
+        for (uint32_t k = 0; k < 9; ++k)
+            want.push_back ({ 60 + cMajor[k % 7], k * step + (k % 2 == 1 ? step / 3 : 0) });
+        check (sameNotes (notesOf (run (s), 0x90), want), "1/8 steps: C at 0, D at 16000, E at 24000, F at 40000 ...");
+
+        // 3000-sample steps land on block boundaries in many different ways: no step may repeat or go missing
+        s.params = { { "Swing", "100" }, { "Step Rate", "1/32" }, { "Note Length", "1/32" } };
+        want.clear();
+        for (uint32_t k = 0; k < 33; ++k)
+            want.push_back ({ 60 + cMajor[k % 7], k * 3000 + (k % 2 == 1 ? 1000 : 0) });
+        check (sameNotes (notesOf (run (s), 0x90), want), "1/32 steps: 33 notes, none twice and none missing");
+    }
+
+    std::printf ("arp reset\n");
+    {
+        Scenario s;
+        s.startQuarters = 1.25;
+        s.numBlocks = 100;
+        s.params = { { "Arp Reset", "Restart on play" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65 }, 6000)), "starting between two steps, the arp starts on its first note");
+    }
+
+    std::printf ("seed\n");
+    {
+        Scenario fixed;
+        fixed.params = { { "Play Mode", "Random" }, { "Scale", "Major Pentatonic" }, { "Note Length", "1/32" }, { "Seed", "42" } };
+        fixed.numBlocks = 750;
+        const auto first = noteNumbers (notesOf (run (fixed), 0x90));
+        check (first.size() == 32 && first == noteNumbers (notesOf (run (fixed), 0x90)), "a fixed seed gives the same notes every time");
+
+        Scenario other = fixed;
+        other.params.back() = { "Seed", "43" };
+        check (first != noteNumbers (notesOf (run (other), 0x90)), "another seed gives other notes");
+
+        Scenario later = fixed; // starts two quarters in, at step 4: the notes must be those of steps 4 to 8 above
+        later.startQuarters = 2.0;
+        later.numBlocks = 100;
+        const auto fromStep4 = noteNumbers (notesOf (run (later), 0x90));
+        check (fromStep4.size() == 5 && std::equal (fromStep4.begin(), fromStep4.end(), first.begin() + 4),
+               "a step plays the same note wherever the transport starts");
+
+        Scenario automatic = fixed;
+        automatic.params.back() = { "Seed", "Auto" };
+        check (noteNumbers (notesOf (run (automatic), 0x90)) != noteNumbers (notesOf (run (automatic), 0x90)),
+               "seed Auto gives different notes each time");
+    }
+
     std::printf ("saved state\n");
     {
         Scenario s;
@@ -562,6 +682,12 @@ int main (int argc, char** argv)
         s.roundTripState = true;
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 66, 67, 69, 71, 73, 74, 64, 66 }, 0)),
                "key and scale come back after loading: E dorian");
+
+        s.params = { { "Step Rate", "1/4" }, { "Low Octave", "3" }, { "High Octave", "3" }, { "Channel", "3" }, { "Velocity", "77" } };
+        const auto out = run (s);
+        const auto ons = notesOf (out, 0x90);
+        check (sameNotes (ons, grid ({ 48, 50, 52, 53, 55 }, 0, 2 * step)), "step rate and octaves come back: 1/4 steps in octave 3");
+        check (allOnChannel (out, 3) && ! ons.empty() && ons[0].velocity == 77, "channel and velocity come back");
     }
 
     std::printf ("all blocks\n");

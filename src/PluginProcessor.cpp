@@ -7,9 +7,6 @@
 namespace
 {
 constexpr double kFallbackBpm = 120.0;
-constexpr double kStepQuarters = 0.5; // the step grid is fixed at 1/8th for now
-constexpr int kChannel = 1;
-constexpr juce::uint8 kVelocity = 100;
 constexpr double kBoundaryTolerance = 1.0e-6; // in steps: keeps a step on a block boundary in exactly one block
 
 template <typename Names>
@@ -36,22 +33,73 @@ GenerativeMidiProcessor::GenerativeMidiProcessor()
     // A silent stereo output. Some hosts (Bitwig) do not run a plugin that has no audio ports.
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
-    // Defaults: C major, arpeggio going up, every step plays, 1/16th notes.
-    addParameter (keyParam = new juce::AudioParameterChoice ({ "key", 1 }, "Key", namesOf (music::keyNames), 0));
-    addParameter (scaleParam = new juce::AudioParameterChoice ({ "scale", 1 }, "Scale", scaleNames(), 0));
-    addParameter (playModeParam = new juce::AudioParameterChoice ({ "playMode", 1 }, "Play Mode",
-                                                                  namesOf (music::playModeNames), music::arpeggio));
-    addParameter (arpDirectionParam = new juce::AudioParameterChoice ({ "arpDirection", 1 }, "Arp Direction",
-                                                                      namesOf (music::arpDirectionNames), music::up));
-    addParameter (chanceParam = new juce::AudioParameterInt ({ "chance", 1 }, "Chance", 0, 100, 100));
-    addParameter (noteLengthParam = new juce::AudioParameterChoice ({ "noteLength", 1 }, "Note Length",
-                                                                    namesOf (music::noteLengthNames), 1));
+    using Choice = juce::AudioParameterChoice;
+    using Int = juce::AudioParameterInt;
+    const auto percent = juce::AudioParameterIntAttributes().withLabel ("%");
+
+    // Defaults: C major, arpeggio going up, every 1/8th step plays a 1/16th note in octave 4, velocity 100, channel 1.
+    addParameter (keyParam = new Choice ({ "key", 1 }, "Key", namesOf (music::keyNames), 0));
+    addParameter (scaleParam = new Choice ({ "scale", 1 }, "Scale", scaleNames(), 0));
+    addParameter (playModeParam = new Choice ({ "playMode", 1 }, "Play Mode", namesOf (music::playModeNames), music::arpeggio));
+    addParameter (arpDirectionParam = new Choice ({ "arpDirection", 1 }, "Arp Direction", namesOf (music::arpDirectionNames), music::up));
+    addParameter (arpResetParam = new Choice ({ "arpReset", 1 }, "Arp Reset", namesOf (music::arpResetNames), music::followTimeline));
+    addParameter (stepRateParam = new Choice ({ "stepRate", 1 }, "Step Rate", namesOf (music::stepRateNames), music::kDefaultStepRate));
+    addParameter (noteLengthParam = new Choice ({ "noteLength", 1 }, "Note Length", namesOf (music::noteLengthNames), 1));
+    addParameter (chanceParam = new Int ({ "chance", 1 }, "Chance", 0, 100, 100, percent));
+    addParameter (swingParam = new Int ({ "swing", 1 }, "Swing", 0, 100, 0, percent));
+    addParameter (lowOctaveParam = new Int ({ "lowOctave", 1 }, "Low Octave", music::kMinOctave, music::kMaxOctave, music::kDefaultOctave));
+    addParameter (highOctaveParam = new Int ({ "highOctave", 1 }, "High Octave", music::kMinOctave, music::kMaxOctave, music::kDefaultOctave));
+    addParameter (velocityParam = new Int ({ "velocity", 1 }, "Velocity", 1, 127, 100));
+    addParameter (velocityVariationParam = new Int ({ "velocityVariation", 1 }, "Velocity Variation", 0, 64, 0));
+    addParameter (channelParam = new Int ({ "channel", 1 }, "Channel", 1, 16, 1));
+    addParameter (seedParam = new Int ({ "seed", 1 }, "Seed", 0, 9999, 0,
+                                       juce::AudioParameterIntAttributes()
+                                           .withStringFromValueFunction ([] (int value, int) { return value == 0 ? juce::String ("Auto") : juce::String (value); })
+                                           .withValueFromStringFunction ([] (const juce::String& text)
+                                                                         { return text.trim().equalsIgnoreCase ("auto") ? 0 : text.getIntValue(); })));
+
+    lowOctaveParam->addListener (this);
+    highOctaveParam->addListener (this);
+}
+
+GenerativeMidiProcessor::~GenerativeMidiProcessor()
+{
+    lowOctaveParam->removeListener (this);
+    highOctaveParam->removeListener (this);
+    cancelPendingUpdate();
+}
+
+void GenerativeMidiProcessor::parameterValueChanged (int parameterIndex, float)
+{
+    // May be called from any thread, including the audio thread when the host automates the parameter.
+    if (parameterIndex == lowOctaveParam->getParameterIndex())
+        lastChangedOctave = 1;
+    else if (parameterIndex == highOctaveParam->getParameterIndex())
+        lastChangedOctave = 2;
+    else
+        return;
+
+    triggerAsyncUpdate();
+}
+
+void GenerativeMidiProcessor::handleAsyncUpdate()
+{
+    const int low = lowOctaveParam->get();
+    const int high = highOctaveParam->get();
+    if (low <= high)
+        return;
+
+    if (lastChangedOctave == 1)
+        *highOctaveParam = low;
+    else
+        *lowOctaveParam = high;
 }
 
 void GenerativeMidiProcessor::prepareToPlay (double newSampleRate, int)
 {
     sampleRate = newSampleRate;
     internalPpq = 0.0;
+    wasPlaying = false;
     pendingNoteOffs.clear();
     pendingNoteOffs.reserve (256);
     newNotes.reserve (256);
@@ -81,6 +129,7 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         pendingNoteOffs.clear();
         internalPpq = 0.0;
+        wasPlaying = false;
         return;
     }
 
@@ -93,39 +142,70 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const double endQuarters = startQuarters + numSamples / samplesPerQuarter;
     internalPpq = endQuarters;
 
+    if (! wasPlaying)
+        playStartQuarters = startQuarters;
+    wasPlaying = true;
+
+    // Settings for this block
     const auto& scale = music::scales[scaleParam->getIndex()];
-    const int rootNote = music::kRootNote + keyParam->getIndex();
+    const int key = keyParam->getIndex();
     const bool arpeggiate = playModeParam->getIndex() == music::arpeggio;
     const int direction = arpDirectionParam->getIndex();
-    const int chancePercent = chanceParam->get();
+    const bool restartArp = arpResetParam->getIndex() == music::restartOnPlay;
+    const double stepQuarters = music::stepRateQuarters[stepRateParam->getIndex()];
+    const double swingDelayQuarters = swingParam->get() / 100.0 * stepQuarters / 3.0; // 100 %: the off-beat of a triplet
     const double noteLengthSamples = music::noteLengthQuarters[noteLengthParam->getIndex()] * samplesPerQuarter;
+    const int chancePercent = chanceParam->get();
+    const int channel = channelParam->get();
+    const int velocity = velocityParam->get();
+    const int velocityVariation = velocityVariationParam->get();
+    const int seed = seedParam->get();
 
-    // Step k starts at k * kStepQuarters. A block owns the steps from the first one at or after its start up to,
-    // not including, the first one at or after its end, so consecutive blocks never repeat or skip a step.
-    const auto firstStepAtOrAfter = [] (double quarters)
-    { return (juce::int64) std::ceil (quarters / kStepQuarters - kBoundaryTolerance); };
+    // Whatever the two octave parameters say, the range is low..high
+    const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
+    const int highOctave = juce::jmax (lowOctaveParam->get(), highOctaveParam->get());
+    const int poolSize = (highOctave - lowOctave + 1) * scale.size;
+
+    const auto firstStepAtOrAfter = [stepQuarters] (double quarters)
+    { return (juce::int64) std::ceil (quarters / stepQuarters - kBoundaryTolerance); };
+
+    const auto restartStep = firstStepAtOrAfter (playStartQuarters);
+    const double toleranceQuarters = kBoundaryTolerance * stepQuarters;
 
     newNotes.clear();
 
-    for (auto step = firstStepAtOrAfter (startQuarters); step < firstStepAtOrAfter (endQuarters); ++step)
+    // Step k is at k * stepQuarters, and odd steps are swung later. A block owns the steps that start in it, so
+    // consecutive blocks never repeat or skip a step. A swung step starts up to one delay after its grid position.
+    for (auto step = firstStepAtOrAfter (startQuarters - swingDelayQuarters); step < firstStepAtOrAfter (endQuarters); ++step)
     {
-        if (random.nextInt (100) >= chancePercent)
+        const double stepQuartersStart = (double) step * stepQuarters + (step % 2 != 0 ? swingDelayQuarters : 0.0);
+        if (stepQuartersStart < startQuarters - toleranceQuarters || stepQuartersStart >= endQuarters - toleranceQuarters)
             continue;
 
-        const double offset = ((double) step * kStepQuarters - startQuarters) * samplesPerQuarter;
-        const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), offset);
+        // All the randomness of a step comes from one generator, so it does not depend on the other settings.
+        // A fixed seed makes it depend on the seed and the step number only.
+        auto stepRandom = music::StepRandom { seed > 0 ? music::StepRandom::forStep (seed, step).state
+                                                       : (std::uint64_t) random.nextInt64() };
+        const int chanceDraw = stepRandom.nextInt (100);
+        const int noteDraw = stepRandom.nextInt (poolSize);
+        const int velocityDraw = stepRandom.nextInt (2 * velocityVariation + 1);
 
-        const int interval = arpeggiate ? scale.intervals[music::arpIndex (direction, scale.size, step)]
-                                        : scale.intervals[random.nextInt (scale.size)];
-        const int note = rootNote + interval;
+        if (chanceDraw >= chancePercent)
+            continue;
+
+        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, restartArp ? step - restartStep : step)
+                                         : noteDraw;
+        const int note = music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size]);
+
+        const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepQuartersStart - startQuarters) * samplesPerQuarter);
 
         // A note that is still sounding is ended at the moment the same note is played again
         for (auto& pending : pendingNoteOffs)
-            if (pending.channel == kChannel && pending.note == note && pending.position > onPosition)
+            if (pending.channel == channel && pending.note == note && pending.position > onPosition)
                 pending.position = onPosition;
 
-        newNotes.push_back ({ note, (int) onPosition });
-        pendingNoteOffs.push_back ({ kChannel, note, onPosition + noteLengthSamples });
+        newNotes.push_back ({ channel, note, juce::jlimit (1, 127, velocity + velocityDraw - velocityVariation), (int) onPosition });
+        pendingNoteOffs.push_back ({ channel, note, onPosition + noteLengthSamples });
     }
 
     // Note-offs go into the buffer before the note-ons: at the same sample a MidiBuffer keeps insertion order,
@@ -145,7 +225,7 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     }
 
     for (const auto& newNote : newNotes)
-        midi.addEvent (juce::MidiMessage::noteOn (kChannel, newNote.note, kVelocity), newNote.position);
+        midi.addEvent (juce::MidiMessage::noteOn (newNote.channel, newNote.note, (juce::uint8) newNote.velocity), newNote.position);
 }
 
 juce::AudioProcessorEditor* GenerativeMidiProcessor::createEditor()
