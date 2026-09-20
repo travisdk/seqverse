@@ -70,3 +70,27 @@ target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
 target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
 
 add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)
+
+# Headless editor test: builds the real editor and processor without a host or a window and checks which controls
+# are enabled. Given a file name prefix it also writes PNG snapshots of the editor.
+#   cmake --build build --target GenerativeMidiUiTest && ./build/GenerativeMidiUiTest /tmp/editor
+juce_add_console_app(GenerativeMidiUiTest PRODUCT_NAME "GenerativeMidiUiTest")
+
+target_sources(GenerativeMidiUiTest PRIVATE
+    tests/ui_test.cpp
+    src/PluginProcessor.cpp
+    src/PluginEditor.cpp)
+
+target_compile_definitions(GenerativeMidiUiTest PRIVATE
+    JucePlugin_Name="GenerativeMidi"
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+
+target_link_libraries(GenerativeMidiUiTest
+    PRIVATE
+        juce::juce_audio_utils
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+add_test(NAME ui_enabled_controls COMMAND GenerativeMidiUiTest)

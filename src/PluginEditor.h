@@ -27,8 +27,14 @@ private:
         std::unique_ptr<juce::SliderParameterAttachment> attachment;
     };
 
+    // Each control's component ID is its parameter ID, so tests can find it with findChildWithID().
     void setUpSelector (Selector&, const juce::String& text, juce::AudioParameterChoice&);
     void setUpKnob (Knob&, const juce::String& text, juce::RangedAudioParameter&);
+
+    // Controls that have no effect with the current settings are disabled (dimmed), label included.
+    void updateEnabledControls();
+    static void setEnabled (Selector&, bool);
+    static void setEnabled (Knob&, bool);
 
     GenerativeMidiProcessor& processor;
 

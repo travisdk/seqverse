@@ -4,6 +4,11 @@
 namespace
 {
 const juce::Colour textColour (0xff14181c);
+
+// JUCE draws its "Made with JUCE" badge in the bottom right corner of the editor. The last strip is left empty so
+// that it does not cover the seed knob.
+constexpr int kFooterHeight = 70;
+constexpr int kHeight = 500 + kFooterHeight;
 }
 
 GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
@@ -21,16 +26,6 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
     setUpSelector (arpReset, "Arp reset", *processor.arpResetParam);
-
-    // The arp settings only matter in arpeggio mode. The attachment notifies on host changes too.
-    const auto updateArpSelectors = [this]
-    {
-        const bool arpeggio = processor.playModeParam->getIndex() == music::arpeggio;
-        arpDirection.box.setEnabled (arpeggio);
-        arpReset.box.setEnabled (arpeggio);
-    };
-    playMode.box.onChange = updateArpSelectors;
-    updateArpSelectors();
 
     setUpKnob (chance, "Chance", *processor.chanceParam);
     chance.slider.setTextValueSuffix (" %");
@@ -54,7 +49,39 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     { return value < 1.0 ? juce::String ("Auto") : juce::String (juce::roundToInt (value)); };
     seed.slider.updateText();
 
-    setSize (660, 500);
+    // The attachments notify these on host changes (automation) as well as on changes made here
+    playMode.box.onChange = [this] { updateEnabledControls(); };
+    chance.slider.onValueChange = [this] { updateEnabledControls(); };
+    velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
+    updateEnabledControls();
+
+    setSize (660, kHeight);
+}
+
+void GenerativeMidiEditor::updateEnabledControls()
+{
+    const bool arpeggio = processor.playModeParam->getIndex() == music::arpeggio;
+
+    // Only the arpeggio walks the pool in a direction, and restarts
+    setEnabled (arpDirection, arpeggio);
+    setEnabled (arpReset, arpeggio);
+
+    // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
+    // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
+    const bool anythingRandom = ! arpeggio || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0;
+    setEnabled (seed, anythingRandom);
+}
+
+void GenerativeMidiEditor::setEnabled (Selector& selector, bool enabled)
+{
+    selector.label.setEnabled (enabled);
+    selector.box.setEnabled (enabled);
+}
+
+void GenerativeMidiEditor::setEnabled (Knob& knob, bool enabled)
+{
+    knob.label.setEnabled (enabled);
+    knob.slider.setEnabled (enabled);
 }
 
 void GenerativeMidiEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
@@ -63,6 +90,7 @@ void GenerativeMidiEditor::setUpSelector (Selector& selector, const juce::String
     selector.label.setColour (juce::Label::textColourId, textColour);
     addAndMakeVisible (selector.label);
 
+    selector.box.setComponentID (parameter.getParameterID());
     selector.box.addItemList (parameter.choices, 1);
     addAndMakeVisible (selector.box);
 
@@ -76,8 +104,12 @@ void GenerativeMidiEditor::setUpKnob (Knob& knob, const juce::String& text, juce
     knob.label.setColour (juce::Label::textColourId, textColour);
     addAndMakeVisible (knob.label);
 
+    knob.slider.setComponentID (parameter.getParameterID());
     knob.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     knob.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 22);
+    // The default value text is white, which does not show on the light background
+    knob.slider.setColour (juce::Slider::textBoxTextColourId, textColour);
+    knob.slider.setColour (juce::Slider::textBoxOutlineColourId, textColour.withAlpha (0.35f));
     addAndMakeVisible (knob.slider);
 
     knob.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, knob.slider);
@@ -114,6 +146,7 @@ void GenerativeMidiEditor::resized()
     area.removeFromTop (10);
     placeSelectors (area.removeFromTop (46), playMode, arpDirection, arpReset);
     area.removeFromTop (14);
+    area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 
     // Knobs: five in the first row, four in the second
     const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
