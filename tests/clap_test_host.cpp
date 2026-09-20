@@ -382,6 +382,40 @@ bool sameNotes (const std::vector<Note>& got, const std::vector<Note>& want, boo
     return ok;
 }
 
+// C major going up on the 1/8 grid, where the arp starts over after `stepsPerCycle` steps: the notes a cycle of
+// that many steps gives. With a cycle of 7 steps or a multiple of it the pattern is the same as without a cycle.
+std::vector<Note> cycledArp (int count, int stepsPerCycle)
+{
+    std::vector<Note> result;
+    for (int i = 0; i < count; ++i)
+        result.push_back ({ 60 + cMajor[(i % stepsPerCycle) % 7], (uint32_t) i * step });
+    return result;
+}
+
+// True when every note-on has a twin one cycle earlier or later, with the same note and velocity, at the same place in
+// its cycle: whatever plays in one cycle plays in the next. Only the `cycles` complete cycles are compared.
+bool cyclesRepeat (const std::vector<Note>& ons, uint32_t cycleSamples, uint32_t cycles)
+{
+    const auto hasTwin = [&] (const Note& n, uint32_t time)
+    {
+        for (const auto& m : ons)
+            if (m.note == n.note && m.velocity == n.velocity && m.time + 1 >= time && m.time <= time + 1)
+                return true;
+        return false;
+    };
+
+    const uint32_t end = cycleSamples * cycles;
+    bool ok = true;
+    for (const auto& n : ons)
+    {
+        if (n.time + cycleSamples < end)
+            ok &= hasTwin (n, n.time + cycleSamples);
+        if (n.time >= cycleSamples && n.time < end)
+            ok &= hasTwin (n, n.time - cycleSamples);
+    }
+    return ok;
+}
+
 // A note that ends on the sample where the same note starts again has to end first.
 bool offsBeforeOnsAtSameSample (const std::vector<clap_event_midi_t>& events)
 {
@@ -451,6 +485,7 @@ int main (int argc, char** argv)
             { "Velocity", 126, false },
             { "Velocity Variation", 64, false },
             { "Channel", 15, false },
+            { "Cycle Length", music::kMaxCycleHalfBeats, false },
             { "Seed", 9999, false },
         };
         for (const auto& expected : spans)
@@ -735,6 +770,77 @@ int main (int argc, char** argv)
                "seed Auto gives different notes each time");
     }
 
+    // 4.5 beats are nine 1/8 steps, so C major (7 notes) going up starts over after every nine steps: C D E F G A B C D | C D E ...
+    std::printf ("cycle length\n");
+    {
+        Scenario s;
+        s.params = { { "Cycle Length", "4.5" } };
+        s.numBlocks = 422; // two cycles of 108000 samples, and the first step of the third
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (19, 9)), "4.5 beats: the arpeggio starts over every nine steps");
+
+        s = Scenario();
+        s.rawParams = { { "Cycle Length", 9 } }; // what a host sends: nine half beats
+        s.numBlocks = 422;
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (19, 9)), "picked by value, as a host sends it: 9 is 4.5 beats");
+
+        s = Scenario();
+        s.params = { { "Cycle Length", "Endless" } };
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 7)), "Endless plays as if there was no cycle");
+
+        s = Scenario();
+        s.params = { { "Cycle Length", "0.5" } }; // one step per cycle
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 1)), "half a beat: every step is the first step of a cycle");
+
+        // 1/4T steps are 2/3 of a beat, so a one beat cycle has two of them, the second one 16000 samples in, and then the
+        // grid starts over: the last step of a cycle is cut short
+        s = Scenario();
+        s.params = { { "Cycle Length", "1" }, { "Step Rate", "1/4T" } };
+        check (sameNotes (notesOf (run (s), 0x90),
+                          { { 60, 0 }, { 62, 16000 }, { 60, 24000 }, { 62, 40000 }, { 60, 48000 }, { 62, 64000 }, { 60, 72000 }, { 62, 88000 }, { 60, 96000 } }),
+               "1 beat with 1/4T steps: two steps per cycle, then the grid starts over");
+
+        // Cycles are laid out on the host timeline from zero: at 5.5 beats the second cycle (4.5 to 9) is in its third step
+        s = Scenario();
+        s.params = { { "Cycle Length", "4.5" } };
+        s.startQuarters = 5.5;
+        s.numBlocks = 100;
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 65, 67, 69, 71 }, 0)), "starting inside a cycle joins it where the timeline is");
+    }
+
+    std::printf ("cycle length with random choices\n");
+    {
+        // 4 beats: eight 1/8 steps, 96000 samples. Three cycles and the first step of the fourth.
+        Scenario s;
+        s.params = { { "Play Mode", "Random" }, { "Scale", "Chromatic" }, { "Note Length", "1/32" }, { "Cycle Length", "4" } };
+        s.numBlocks = 563;
+        const auto ons = notesOf (run (s), 0x90);
+        std::vector<int> distinct;
+        for (const auto& n : ons)
+            if (std::find (distinct.begin(), distinct.end(), n.note) == distinct.end())
+                distinct.push_back (n.note);
+        check (ons.size() == 25 && distinct.size() >= 4, "random notes, eight steps a cycle");
+        check (cyclesRepeat (ons, 96000, 3), "seed Auto: each cycle repeats the notes of the one before");
+        check (noteNumbers (ons) != noteNumbers (notesOf (run (s), 0x90)), "and a new play rolls a new phrase");
+
+        s.params.push_back ({ "Seed", "42" });
+        check (noteNumbers (notesOf (run (s), 0x90)) == noteNumbers (notesOf (run (s), 0x90)), "with a fixed seed the phrase is the same every time");
+
+        // Arpeggio: which steps play, how hard and how late, are all random or swung here, and repeat in every cycle
+        s = Scenario();
+        s.params = { { "Chance", "50" }, { "Velocity Variation", "20" }, { "Swing", "60" }, { "Seed", "5" }, { "Cycle Length", "4" } };
+        s.numBlocks = 563;
+        const auto arp = notesOf (run (s), 0x90);
+        int inFirstCycle = 0;
+        for (const auto& n : arp)
+            inFirstCycle += n.time < 96000;
+        check (inFirstCycle > 0 && inFirstCycle < 8, "arpeggio at 50 %: some of the eight steps play, not all");
+        check (cyclesRepeat (arp, 96000, 3), "and the same ones play, with the same velocity and swing, in every cycle");
+
+        // Without a cycle the same settings do not repeat: the cycle is what makes them
+        s.params.pop_back();
+        check (! cyclesRepeat (notesOf (run (s), 0x90), 96000, 3), "without a cycle length nothing repeats");
+    }
+
     std::printf ("saved state\n");
     {
         Scenario s;
@@ -748,6 +854,12 @@ int main (int argc, char** argv)
         const auto ons = notesOf (out, 0x90);
         check (sameNotes (ons, grid ({ 48, 50, 52, 53, 55 }, 0, 2 * step)), "step rate and octaves come back: 1/4 steps in octave 3");
         check (allOnChannel (out, 3) && ! ons.empty() && ons[0].velocity == 77, "channel and velocity come back");
+
+        s = Scenario();
+        s.params = { { "Cycle Length", "4.5" } };
+        s.numBlocks = 250; // 11 steps
+        s.roundTripState = true;
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (11, 9)), "the cycle length comes back: 4.5 beats");
     }
 
     std::printf ("all blocks\n");

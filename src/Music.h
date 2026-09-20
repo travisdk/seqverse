@@ -91,6 +91,9 @@ constexpr int kDefaultStepRate = 4; // 1/8
 constexpr const char* stepRateNames[kNumStepRates] = { "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1/1" };
 constexpr double stepRateQuarters[kNumStepRates] = { 0.125, 1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 2.0, 4.0 };
 
+// The cycle length is counted in half beats: 0 is endless (no cycle), 1 is half a beat, 9 is 4.5 beats, up to 64 beats.
+constexpr int kMaxCycleHalfBeats = 128;
+
 constexpr int kNumNoteLengths = 6;
 constexpr const char* noteLengthNames[kNumNoteLengths] = { "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" };
 constexpr double noteLengthQuarters[kNumNoteLengths] = { 0.125, 0.25, 0.5, 1.0, 2.0, 4.0 };

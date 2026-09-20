@@ -26,6 +26,23 @@ juce::StringArray scaleNames()
     return result;
 }
 
+juce::String cycleLengthText (int halfBeats)
+{
+    if (halfBeats <= 0)
+        return "Endless";
+
+    return juce::String (halfBeats * 0.5, halfBeats % 2 != 0 ? 1 : 0) + (halfBeats == 2 ? " beat" : " beats");
+}
+
+int cycleLengthFromText (const juce::String& text)
+{
+    const auto trimmed = text.trim();
+    if (trimmed.isEmpty() || trimmed.equalsIgnoreCase ("endless") || trimmed.equalsIgnoreCase ("off"))
+        return 0;
+
+    return juce::jlimit (0, music::kMaxCycleHalfBeats, juce::roundToInt (trimmed.getDoubleValue() * 2.0));
+}
+
 const char* const stateTag = "GenerativeMidi";
 }
 
@@ -52,6 +69,10 @@ GenerativeMidiProcessor::GenerativeMidiProcessor()
     addParameter (velocityParam = new Int ({ "velocity", 1 }, "Velocity", 1, 127, 100));
     addParameter (velocityVariationParam = new Int ({ "velocityVariation", 1 }, "Velocity Variation", 0, 64, 0));
     addParameter (channelParam = new Int ({ "channel", 1 }, "Channel", 1, 16, 1));
+    addParameter (cycleLengthParam = new Int ({ "cycleLength", 1 }, "Cycle Length", 0, music::kMaxCycleHalfBeats, 0,
+                                              juce::AudioParameterIntAttributes()
+                                                  .withStringFromValueFunction ([] (int halfBeats, int) { return cycleLengthText (halfBeats); })
+                                                  .withValueFromStringFunction (cycleLengthFromText)));
     addParameter (seedParam = new Int ({ "seed", 1 }, "Seed", 0, 9999, 0,
                                        juce::AudioParameterIntAttributes()
                                            .withStringFromValueFunction ([] (int value, int) { return value == 0 ? juce::String ("Auto") : juce::String (value); })
@@ -142,7 +163,8 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const double endQuarters = startQuarters + numSamples / samplesPerQuarter;
     internalPpq = endQuarters;
 
-    if (! wasPlaying)
+    const bool justStarted = ! wasPlaying;
+    if (justStarted)
         playStartQuarters = startQuarters;
     wasPlaying = true;
 
@@ -161,6 +183,16 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const int velocityVariation = velocityVariationParam->get();
     const int seed = seedParam->get();
 
+    const int cycleHalfBeats = cycleLengthParam->get(); // 0: endless
+    const double cycleQuarters = cycleHalfBeats * 0.5;
+
+    // With a cycle and the seed on Auto, every new play (and every new cycle length) rolls a new phrase, which then
+    // repeats. A transport that loops or jumps while playing keeps its phrase.
+    if (justStarted || cycleHalfBeats != lastCycleHalfBeats)
+        autoSeed = 1 + random.nextInt (0x7ffffffe);
+    lastCycleHalfBeats = cycleHalfBeats;
+    const int cycleSeed = seed > 0 ? seed : autoSeed;
+
     // Whatever the two octave parameters say, the range is low..high
     const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
     const int highOctave = juce::jmax (lowOctaveParam->get(), highOctaveParam->get());
@@ -174,30 +206,23 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     newNotes.clear();
 
-    // Step k is at k * stepQuarters, and odd steps are swung later. A block owns the steps that start in it, so
-    // consecutive blocks never repeat or skip a step. A swung step starts up to one delay after its grid position.
-    for (auto step = firstStepAtOrAfter (startQuarters - swingDelayQuarters); step < firstStepAtOrAfter (endQuarters); ++step)
+    // Plays one step that starts at `stepStart` (in quarters): `arpStep` is its position in the arpeggio and
+    // `randomState` seeds its random numbers.
+    const auto playStep = [&] (double stepStart, juce::int64 arpStep, std::uint64_t randomState)
     {
-        const double stepQuartersStart = (double) step * stepQuarters + (step % 2 != 0 ? swingDelayQuarters : 0.0);
-        if (stepQuartersStart < startQuarters - toleranceQuarters || stepQuartersStart >= endQuarters - toleranceQuarters)
-            continue;
-
-        // All the randomness of a step comes from one generator, so it does not depend on the other settings.
-        // A fixed seed makes it depend on the seed and the step number only.
-        auto stepRandom = music::StepRandom { seed > 0 ? music::StepRandom::forStep (seed, step).state
-                                                       : (std::uint64_t) random.nextInt64() };
+        // All the randomness of a step comes from one generator, so it does not depend on the other settings
+        auto stepRandom = music::StepRandom { randomState };
         const int chanceDraw = stepRandom.nextInt (100);
         const int noteDraw = stepRandom.nextInt (poolSize);
         const int velocityDraw = stepRandom.nextInt (2 * velocityVariation + 1);
 
         if (chanceDraw >= chancePercent)
-            continue;
+            return;
 
-        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, restartArp ? step - restartStep : step)
-                                         : noteDraw;
+        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, arpStep) : noteDraw;
         const int note = music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size]);
 
-        const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepQuartersStart - startQuarters) * samplesPerQuarter);
+        const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepStart - startQuarters) * samplesPerQuarter);
 
         // A note that is still sounding is ended at the moment the same note is played again
         for (auto& pending : pendingNoteOffs)
@@ -206,6 +231,47 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         newNotes.push_back ({ channel, note, juce::jlimit (1, 127, velocity + velocityDraw - velocityVariation), (int) onPosition });
         pendingNoteOffs.push_back ({ channel, note, onPosition + noteLengthSamples });
+    };
+
+    // A block owns the steps that start in it, so consecutive blocks never repeat or skip a step
+    const auto startsInThisBlock = [&] (double stepStart)
+    { return stepStart >= startQuarters - toleranceQuarters && stepStart < endQuarters - toleranceQuarters; };
+
+    if (cycleHalfBeats == 0)
+    {
+        // Endless. Step k is at k * stepQuarters, and odd steps are swung later, so a swung step starts up to one
+        // delay after its grid position. A fixed seed makes the random numbers depend on the seed and k only.
+        for (auto step = firstStepAtOrAfter (startQuarters - swingDelayQuarters); step < firstStepAtOrAfter (endQuarters); ++step)
+        {
+            const double stepStart = (double) step * stepQuarters + (step % 2 != 0 ? swingDelayQuarters : 0.0);
+            if (startsInThisBlock (stepStart))
+                playStep (stepStart, restartArp ? step - restartStep : step,
+                          seed > 0 ? music::StepRandom::forStep (seed, step).state : (std::uint64_t) random.nextInt64());
+        }
+    }
+    else
+    {
+        // Cycles start at multiples of the cycle length on the host timeline, and the step grid restarts in each of
+        // them. Everything about a step (its note, chance, velocity and swing) depends on its number in its cycle
+        // and on the cycle seed only, so every cycle plays what the first one did. The steps are counted from the
+        // start of the cycle, so a cycle that is not a whole number of steps just ends with a shorter last step.
+        const auto stepsInCycle = (juce::int64) std::ceil (cycleQuarters / stepQuarters - kBoundaryTolerance);
+        const auto firstCycle = (juce::int64) std::floor ((startQuarters - swingDelayQuarters - toleranceQuarters) / cycleQuarters);
+        const auto lastCycle = (juce::int64) std::floor (endQuarters / cycleQuarters);
+
+        for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle)
+        {
+            const double cycleStart = (double) cycle * cycleQuarters;
+            const auto firstStep = juce::jmax ((juce::int64) 0, firstStepAtOrAfter (startQuarters - swingDelayQuarters - cycleStart));
+            const auto endStep = juce::jmin (stepsInCycle, firstStepAtOrAfter (endQuarters - cycleStart));
+
+            for (auto step = firstStep; step < endStep; ++step)
+            {
+                const double stepStart = cycleStart + (double) step * stepQuarters + (step % 2 != 0 ? swingDelayQuarters : 0.0);
+                if (startsInThisBlock (stepStart))
+                    playStep (stepStart, step, music::StepRandom::forStep (cycleSeed, step).state);
+            }
+        }
     }
 
     // Note-offs go into the buffer before the note-ons: at the same sample a MidiBuffer keeps insertion order,

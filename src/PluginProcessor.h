@@ -10,6 +10,9 @@
 // loops and jumps). Each step has a chance of playing one note from the pool of notes of the selected key and scale
 // over the selected octave range. Arpeggio mode walks the pool in the chosen direction, Random mode picks from it.
 // Odd steps can be swung late, notes get a velocity with optional variation, and they sound for the selected length.
+//
+// With a cycle length, the step grid restarts every cycle (cycles start at multiples of the cycle length on the host
+// timeline) and everything about a step depends on its number within the cycle, so each cycle repeats the last one.
 class GenerativeMidiProcessor : public juce::AudioProcessor,
                                 private juce::AudioProcessorParameter::Listener,
                                 private juce::AsyncUpdater
@@ -57,6 +60,7 @@ public:
     juce::AudioParameterInt* velocityParam = nullptr;
     juce::AudioParameterInt* velocityVariationParam = nullptr; // plus or minus
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16
+    juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is endless
     juce::AudioParameterInt* seedParam = nullptr;              // 0 is a different sequence every time
 
 private:
@@ -86,6 +90,11 @@ private:
     bool wasPlaying = false;
     double playStartQuarters = 0.0; // where the transport was when it last started playing
     juce::Random random;
+
+    // With a cycle and the seed on Auto, this is the seed of the phrase that repeats. It is rolled again each time the
+    // transport starts and when the cycle length changes.
+    int autoSeed = 1;
+    int lastCycleHalfBeats = -1;
 
     std::atomic<int> lastChangedOctave { 0 }; // 0 none, 1 low, 2 high
 

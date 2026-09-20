@@ -55,7 +55,7 @@ int main (int argc, char** argv)
     };
 
     const char* const alwaysEnabled[] = { "key", "scale", "playMode", "stepRate", "noteLength", "chance", "swing",
-                                          "lowOctave", "highOctave", "velocity", "velocityVariation", "channel" };
+                                          "lowOctave", "highOctave", "velocity", "velocityVariation", "channel", "cycleLength" };
     const auto othersEnabled = [&]
     {
         bool ok = true;
@@ -94,6 +94,40 @@ int main (int argc, char** argv)
     check (enabled ("seed"), "the seed is enabled: the velocities are random");
     *processor.velocityVariationParam = 0;
     check (! enabled ("seed"), "the seed is disabled again without variation");
+
+    std::printf ("cycle length\n");
+    {
+        auto* knob = dynamic_cast<juce::Slider*> (editor->findChildWithID ("cycleLength"));
+        check (knob != nullptr, "the cycle length is a knob");
+        if (knob != nullptr)
+        {
+            check (knob->getTextFromValue (0) == "Endless", "at its minimum it says Endless");
+            check (knob->getTextFromValue (1) == "0.5 beats" && knob->getTextFromValue (2) == "1 beat"
+                       && knob->getTextFromValue (8) == "4 beats" && knob->getTextFromValue (9) == "4.5 beats",
+                   "half beats read as 0.5 beats, 1 beat, 4 beats, 4.5 beats");
+        }
+
+        // What is typed into the value box is taken the way the parameter takes it, not as half beats
+        if (knob != nullptr)
+            check (juce::roundToInt (knob->getValueFromText ("4.5")) == 9 && juce::roundToInt (knob->getValueFromText ("4.5 beats")) == 9
+                       && juce::roundToInt (knob->getValueFromText ("1")) == 2 && juce::roundToInt (knob->getValueFromText ("Endless")) == 0,
+                   "typing 4.5, 4.5 beats, 1 or Endless gives 9, 9, 2 and 0 half beats");
+        auto* seedKnob = dynamic_cast<juce::Slider*> (editor->findChildWithID ("seed"));
+        if (seedKnob != nullptr)
+            check (juce::roundToInt (seedKnob->getValueFromText ("Auto")) == 0 && juce::roundToInt (seedKnob->getValueFromText ("42")) == 42,
+                   "typing Auto or 42 in the seed box gives 0 and 42");
+
+        *processor.cycleLengthParam = 9;
+        check (knob != nullptr && juce::roundToInt (knob->getValue()) == 9, "the knob follows the parameter");
+        check (enabled ("arpDirection") && ! enabled ("arpReset"), "in a cycle the arp restarts every cycle, so arp reset is disabled");
+        check (! enabled ("seed") && othersEnabled(), "nothing else changes");
+        snapshot ("cycle");
+
+        *processor.playModeParam = music::randomNotes;
+        *processor.cycleLengthParam = 0;
+        *processor.playModeParam = music::arpeggio;
+        check (enabled ("arpDirection") && enabled ("arpReset"), "arp reset is enabled again at Endless");
+    }
 
     std::printf ("every control has a parameter behind it\n");
     for (auto* parameter : processor.getParameters())

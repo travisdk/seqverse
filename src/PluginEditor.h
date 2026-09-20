@@ -41,7 +41,7 @@ private:
     juce::Label titleLabel;
     Selector key, scale, stepRate, playMode, arpDirection, arpReset;
     Knob chance, noteLength, swing, velocity, velocityVariation;
-    Knob lowOctave, highOctave, channel, seed;
+    Knob lowOctave, highOctave, channel, cycleLength, seed;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GenerativeMidiEditor)
 };

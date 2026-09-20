@@ -31,9 +31,6 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     chance.slider.setTextValueSuffix (" %");
 
     setUpKnob (noteLength, "Note length", *processor.noteLengthParam);
-    noteLength.slider.textFromValueFunction = [] (double value)
-    { return juce::String (music::noteLengthNames[juce::jlimit (0, music::kNumNoteLengths - 1, juce::roundToInt (value))]); };
-    noteLength.slider.updateText();
 
     setUpKnob (swing, "Swing", *processor.swingParam);
     swing.slider.setTextValueSuffix (" %");
@@ -44,15 +41,16 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     setUpKnob (highOctave, "High octave", *processor.highOctaveParam);
     setUpKnob (channel, "Channel", *processor.channelParam);
 
+    // The value text ("Endless", "4.5 beats", "Auto") and what is typed into the value box are handled by the
+    // parameters through the slider attachments, so the host shows the same text
+    setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
     setUpKnob (seed, "Seed", *processor.seedParam);
-    seed.slider.textFromValueFunction = [] (double value)
-    { return value < 1.0 ? juce::String ("Auto") : juce::String (juce::roundToInt (value)); };
-    seed.slider.updateText();
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
+    cycleLength.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
 
     setSize (660, kHeight);
@@ -62,9 +60,10 @@ void GenerativeMidiEditor::updateEnabledControls()
 {
     const bool arpeggio = processor.playModeParam->getIndex() == music::arpeggio;
 
-    // Only the arpeggio walks the pool in a direction, and restarts
+    // Only the arpeggio walks the pool in a direction. It restarts on play unless it runs in a cycle, where
+    // it starts over every cycle and the reset setting has no say.
     setEnabled (arpDirection, arpeggio);
-    setEnabled (arpReset, arpeggio);
+    setEnabled (arpReset, arpeggio && processor.cycleLengthParam->get() == 0);
 
     // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
     // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
@@ -148,7 +147,7 @@ void GenerativeMidiEditor::resized()
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 
-    // Knobs: five in the first row, four in the second
+    // Knobs: five in each of the two rows
     const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
     {
         const int width = row.getWidth() / (int) knobs.size();
@@ -162,5 +161,5 @@ void GenerativeMidiEditor::resized()
 
     const int knobRowHeight = area.getHeight() / 2;
     placeKnobs (area.removeFromTop (knobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation });
-    placeKnobs (area, { &lowOctave, &highOctave, &channel, &seed });
+    placeKnobs (area, { &lowOctave, &highOctave, &channel, &cycleLength, &seed });
 }
