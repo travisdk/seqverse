@@ -35,6 +35,7 @@ juce_add_plugin(GenerativeMidi
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE)
 
 target_sources(GenerativeMidi PRIVATE
+    src/DarkLookAndFeel.h
     src/Music.h
     src/PluginProcessor.cpp
     src/PluginProcessor.h

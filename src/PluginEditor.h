@@ -1,12 +1,13 @@
 #pragma once
 
+#include "DarkLookAndFeel.h"
 #include "PluginProcessor.h"
 
 class GenerativeMidiEditor : public juce::AudioProcessorEditor
 {
 public:
     explicit GenerativeMidiEditor (GenerativeMidiProcessor&);
-    ~GenerativeMidiEditor() override = default;
+    ~GenerativeMidiEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -37,6 +38,8 @@ private:
     static void setEnabled (Knob&, bool);
 
     GenerativeMidiProcessor& processor;
+
+    DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
 
     juce::Label titleLabel;
     Selector key, scale, stepRate, playMode, arpDirection, arpReset;

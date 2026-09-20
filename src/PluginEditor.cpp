@@ -3,8 +3,6 @@
 
 namespace
 {
-const juce::Colour textColour (0xff14181c);
-
 // JUCE draws its "Made with JUCE" badge in the bottom right corner of the editor. The last strip is left empty so
 // that it does not cover the seed knob.
 constexpr int kFooterHeight = 70;
@@ -14,10 +12,12 @@ constexpr int kHeight = 500 + kFooterHeight;
 GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
+    setLookAndFeel (&look); // the components below take their look from here
+
     titleLabel.setText ("Generative MIDI", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
     titleLabel.setFont (juce::Font (28.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, textColour);
+    titleLabel.setColour (juce::Label::textColourId, theme::text);
     addAndMakeVisible (titleLabel);
 
     setUpSelector (key, "Key", *processor.keyParam);
@@ -53,7 +53,16 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     cycleLength.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
 
+    // The value boxes of the sliders were made before the sliders were children of the editor, so they did not know
+    // about its look yet. This makes every control take it.
+    sendLookAndFeelChange();
+
     setSize (660, kHeight);
+}
+
+GenerativeMidiEditor::~GenerativeMidiEditor()
+{
+    setLookAndFeel (nullptr);
 }
 
 void GenerativeMidiEditor::updateEnabledControls()
@@ -86,7 +95,6 @@ void GenerativeMidiEditor::setEnabled (Knob& knob, bool enabled)
 void GenerativeMidiEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
 {
     selector.label.setText (text, juce::dontSendNotification);
-    selector.label.setColour (juce::Label::textColourId, textColour);
     addAndMakeVisible (selector.label);
 
     selector.box.setComponentID (parameter.getParameterID());
@@ -100,15 +108,11 @@ void GenerativeMidiEditor::setUpKnob (Knob& knob, const juce::String& text, juce
 {
     knob.label.setText (text, juce::dontSendNotification);
     knob.label.setJustificationType (juce::Justification::centred);
-    knob.label.setColour (juce::Label::textColourId, textColour);
     addAndMakeVisible (knob.label);
 
     knob.slider.setComponentID (parameter.getParameterID());
     knob.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     knob.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 22);
-    // The default value text is white, which does not show on the light background
-    knob.slider.setColour (juce::Slider::textBoxTextColourId, textColour);
-    knob.slider.setColour (juce::Slider::textBoxOutlineColourId, textColour.withAlpha (0.35f));
     addAndMakeVisible (knob.slider);
 
     knob.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, knob.slider);
@@ -116,7 +120,7 @@ void GenerativeMidiEditor::setUpKnob (Knob& knob, const juce::String& text, juce
 
 void GenerativeMidiEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::lightblue);
+    g.fillAll (theme::background);
 }
 
 void GenerativeMidiEditor::resized()
