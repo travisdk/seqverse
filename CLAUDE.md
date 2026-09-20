@@ -26,6 +26,13 @@ Artefacts land in `build/GenerativeMidi_artefacts/Release/{VST3,CLAP}`. The JUCE
 - Plugin identity (`PLUGIN_MANUFACTURER_CODE Hjuh`, `PLUGIN_CODE Gnmd`, CLAP ID `com.henrik.generative-midi`) is what hosts use to recognise saved sessions, so don't change it casually.
 - `JUCE_WEB_BROWSER=0`, `JUCE_USE_CURL=0` and `JUCE_VST3_CAN_REPLACE_VST2=0` are set as compile definitions; the only JUCE module linked is `juce_audio_utils`.
 
+## Project rules
+
+- **Audio thread** (`processBlock`): no allocations, no locks, no UI calls, and no setting of parameters. Read parameters directly via `AudioParameterInt::get()` and `AudioParameterChoice::getIndex()`.
+- **Parameter constraints** (e.g. low <= high) are enforced in both places: in `processBlock` and by a message-thread listener.
+- **Testing:** use the scripted CLAP test host before claiming something works.
+- **Building:** use CMake and Ninja, and the build must produce no warnings. Ask before replacing the `.clap` in `~/.clap`, because Bitwig may have it loaded.
+
 ## Repo conventions
 
 - `build/` is git-ignored. Sibling checkouts under `.claude/worktrees/` are other Claude sessions' worktrees, not part of the source tree.
