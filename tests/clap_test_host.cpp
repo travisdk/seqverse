@@ -19,7 +19,7 @@ namespace
 {
 constexpr uint32_t sampleRate = 48000;
 constexpr uint32_t blockSize = 512;
-constexpr uint32_t numBlocks = 4;
+constexpr uint32_t numBlocks = 192; // 98304 samples, past the note-off at 96010
 
 int failures = 0;
 
@@ -125,9 +125,15 @@ int main (int argc, char** argv)
     check (plugin->activate (plugin, sampleRate, 1, blockSize), "activate");
     check (plugin->start_processing (plugin), "start_processing");
 
-    // Scenario: note-on in block 0, note-off in block 2. In every block the audio must stay silent.
-    const clap_event_midi noteOn = makeMidi (10, 0x90, 60, 100);
-    const clap_event_midi noteOff = makeMidi (100, 0x80, 60, 0);
+    // The host sends no transport, so the plugin runs at its 120 BPM fallback: an 8th is sampleRate / 4 samples.
+    // Scenario (absolute sample times): C4 held for eight 8ths, and a CC in between that must pass through.
+    constexpr uint32_t eighth = sampleRate / 4;
+    const uint32_t noteOnTime = 10;
+    const std::vector<clap_event_midi> script = {
+        makeMidi (noteOnTime, 0x90, 60, 100),
+        makeMidi (blockSize + 5, 0xB0, 1, 64),
+        makeMidi (noteOnTime + 8 * eighth, 0x80, 60, 0),
+    };
 
     std::vector<float> left (blockSize), right (blockSize);
     float* channels[2] = { left.data(), right.data() };
@@ -138,10 +144,12 @@ int main (int argc, char** argv)
     {
         scenario.blockStart = block * blockSize;
         scenario.events.clear();
-        if (block == 0)
-            scenario.events.push_back (noteOn);
-        if (block == 2)
-            scenario.events.push_back (noteOff);
+        for (auto e : script)
+            if (e.header.time >= scenario.blockStart && e.header.time < scenario.blockStart + blockSize)
+            {
+                e.header.time -= scenario.blockStart; // block-relative for the plugin
+                scenario.events.push_back (e);
+            }
 
         std::fill (left.begin(), left.end(), 1.0f); // poison, so an unwritten buffer is caught
         std::fill (right.begin(), right.end(), 1.0f);
@@ -169,16 +177,44 @@ int main (int argc, char** argv)
     check (processedOk, "process() returned no error");
     check (silent, "audio output is silent");
 
-    // Passthrough: exactly what went in comes out, at the same absolute time.
-    check (scenario.received.size() == 2, "two MIDI events came out");
-    if (scenario.received.size() == 2)
+    // Sort what came out. The trigger note itself must be gone, so anything that is a note is generated.
+    std::vector<clap_event_midi> ons, offs, others;
+    for (const auto& e : scenario.received)
     {
-        auto same = [] (const clap_event_midi& a, uint32_t time, const clap_event_midi& b)
-        { return a.header.time == time && std::memcmp (a.data, b.data, 3) == 0; };
-        check (same (scenario.received[0], noteOn.header.time, noteOn), "note-on passed through unchanged");
-        check (same (scenario.received[1], 2 * blockSize + noteOff.header.time, noteOff),
-               "note-off passed through unchanged");
+        const uint8_t status = e.data[0] & 0xF0;
+        (status == 0x90 ? ons : status == 0x80 ? offs : others).push_back (e);
     }
+
+    // C4 held for eight 8ths: C D E F G A B C5, each on the 8th grid, sounding for 90% of an 8th.
+    const uint8_t expectedNotes[8] = { 60, 62, 64, 65, 67, 69, 71, 72 };
+    const uint32_t gate = eighth * 9 / 10;
+    auto near = [] (uint32_t a, uint32_t b) { return a + 1 >= b && a <= b + 1; };
+
+    bool onsOk = ons.size() == 8;
+    bool offsOk = offs.size() == 8;
+    for (uint32_t k = 0; k < 8 && onsOk && offsOk; ++k)
+    {
+        const uint32_t start = noteOnTime + k * eighth;
+        const bool onOk = ons[k].data[0] == 0x90 && ons[k].data[1] == expectedNotes[k] && ons[k].data[2] == 100
+                          && near (ons[k].header.time, start);
+        const bool offOk = offs[k].data[0] == 0x80 && offs[k].data[1] == expectedNotes[k]
+                           && near (offs[k].header.time, start + gate);
+        if (! onOk || ! offOk)
+            std::printf ("    step %u: note-on %u@%u, note-off %u@%u, expected note %u at %u / %u\n", k, ons[k].data[1],
+                         ons[k].header.time, offs[k].data[1], offs[k].header.time, expectedNotes[k], start, start + gate);
+        onsOk &= onOk;
+        offsOk &= offOk;
+    }
+    if (! onsOk || ! offsOk)
+        std::printf ("    got %zu note-ons, %zu note-offs (expected 8 each)\n", ons.size(), offs.size());
+
+    check (onsOk, "eight note-ons: C D E F G A B C5 on the 8th grid");
+    check (offsOk, "eight note-offs, each 90% of an 8th after its note-on");
+
+    // Everything that is not a note passes through unchanged.
+    check (others.size() == 1 && near (others[0].header.time, blockSize + 5)
+               && std::memcmp (others[0].data, script[1].data, 3) == 0,
+           "CC passed through unchanged");
 
     plugin->stop_processing (plugin);
     plugin->deactivate (plugin);

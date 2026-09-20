@@ -65,4 +65,4 @@ target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS
 target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
 target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
 
-add_test(NAME clap_host_passthrough COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)
+add_test(NAME clap_host_eighths COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)

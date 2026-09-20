@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A JUCE 7.0.9 audio plugin (C++17) that takes MIDI in and puts MIDI out, intended to become a generative MIDI sequencer. It is currently a scaffold: `processBlock` clears the audio buffer and passes MIDI through untouched, there are no parameters, and state save/restore is empty. There are no tests and no linter configured.
+A JUCE 7.0.9 audio plugin (C++17) that takes MIDI in and puts MIDI out, intended to become a generative MIDI sequencer. Currently it turns incoming notes into runs of 1/8th notes in the major scale of the incoming note (see the comment at the top of `src/PluginProcessor.h`); everything that is not a note passes through. The tempo comes from the host playhead, with a 120 BPM fallback. There are no parameters yet and state save/restore is empty. There is no linter configured.
 
 ## Build
 
@@ -20,7 +20,7 @@ Artefacts land in `build/GenerativeMidi_artefacts/Release/{VST3,CLAP}`. The JUCE
 
 ## Testing
 
-`tests/clap_test_host.cpp` is the scripted CLAP test host: a small headless host (no GUI, no audio device) that `dlopen`s the built `.clap` from the build tree, runs a fixed MIDI scenario through `process()` and checks the output. It never touches `~/.clap`. Registered as the CTest test `clap_host_passthrough`.
+`tests/clap_test_host.cpp` is the scripted CLAP test host: a small headless host (no GUI, no audio device) that `dlopen`s the built `.clap` from the build tree, runs a fixed MIDI scenario through `process()` and checks the output. It never touches `~/.clap`. Registered as the CTest test `clap_host_eighths`.
 
 ```
 cmake --build build --target GenerativeMidi_CLAP clap_test_host
@@ -28,7 +28,7 @@ ctest --test-dir build --output-on-failure
 ./build/clap_test_host build/GenerativeMidi_artefacts/Release/CLAP/GenerativeMidi.clap   # verbose, per-check output
 ```
 
-It currently asserts the passthrough behaviour (audio ports: no input, one silent stereo output; note-on/off come out unchanged at the same sample time). When generation logic replaces the passthrough, change the scenario and expectations in that file rather than adding a second host. Final confirmation in Bitwig is manual, since it can't be driven headlessly.
+It currently asserts: no audio input and one silent stereo output; a C4 held for eight 8ths comes out as C D E F G A B C5 on the 8th grid (the host sends no transport, so 120 BPM, 12000 samples per 8th at 48 kHz) with each note sounding 90% of an 8th; a CC passes through unchanged. When the behaviour changes, change the scenario and expectations in that file rather than adding a second host. Final confirmation in Bitwig is manual, since it can't be driven headlessly.
 
 ## Architecture
 
