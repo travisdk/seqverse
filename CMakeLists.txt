@@ -55,3 +55,14 @@ target_link_libraries(GenerativeMidi
 clap_juce_extensions_plugin(TARGET GenerativeMidi
     CLAP_ID "com.henrik.generative-midi"
     CLAP_FEATURES note-effect utility)
+
+# Headless CLAP host for scripted tests. Loads the built .clap straight from the build tree, not from ~/.clap.
+#   cmake --build build --target GenerativeMidi_CLAP clap_test_host && ctest --test-dir build --output-on-failure
+enable_testing()
+
+add_executable(clap_test_host tests/clap_test_host.cpp)
+target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS_DIR}/clap-libs/clap/include")
+target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
+target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
+
+add_test(NAME clap_host_passthrough COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)

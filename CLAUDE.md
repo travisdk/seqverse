@@ -18,6 +18,18 @@ cmake --build build --target GenerativeMidi_CLAP
 
 Artefacts land in `build/GenerativeMidi_artefacts/Release/{VST3,CLAP}`. The JUCE and clap-juce-extensions trees are added `EXCLUDE_FROM_ALL`, so only what the plugin targets depend on gets built from them.
 
+## Testing
+
+`tests/clap_test_host.cpp` is the scripted CLAP test host: a small headless host (no GUI, no audio device) that `dlopen`s the built `.clap` from the build tree, runs a fixed MIDI scenario through `process()` and checks the output. It never touches `~/.clap`. Registered as the CTest test `clap_host_passthrough`.
+
+```
+cmake --build build --target GenerativeMidi_CLAP clap_test_host
+ctest --test-dir build --output-on-failure
+./build/clap_test_host build/GenerativeMidi_artefacts/Release/CLAP/GenerativeMidi.clap   # verbose, per-check output
+```
+
+It currently asserts the passthrough behaviour (audio ports: no input, one silent stereo output; note-on/off come out unchanged at the same sample time). When generation logic replaces the passthrough, change the scenario and expectations in that file rather than adding a second host. Final confirmation in Bitwig is manual, since it can't be driven headlessly.
+
 ## Architecture
 
 - Only `VST3` is declared in `juce_add_plugin(FORMATS VST3)`. JUCE 7 has no CLAP format, so `clap_juce_extensions_plugin(TARGET GenerativeMidi ...)` wraps the same target as a CLAP (`GenerativeMidi_CLAP`). Format-specific behaviour should live behind JUCE's `AudioProcessor` API, not in per-format code.
