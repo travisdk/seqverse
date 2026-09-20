@@ -6,7 +6,11 @@ namespace
 // JUCE draws its "Made with JUCE" badge in the bottom right corner of the editor. The last strip is left empty so
 // that it does not cover the seed knob.
 constexpr int kFooterHeight = 70;
-constexpr int kHeight = 500 + kFooterHeight;
+
+// The space between the two rows of knobs, so that the value boxes of the first do not crowd the labels of the second
+constexpr int kKnobRowGap = 30;
+
+constexpr int kHeight = 500 + kFooterHeight + kKnobRowGap;
 }
 
 GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
@@ -163,7 +167,8 @@ void GenerativeMidiEditor::resized()
         }
     };
 
-    const int knobRowHeight = area.getHeight() / 2;
+    const int knobRowHeight = (area.getHeight() - kKnobRowGap) / 2;
     placeKnobs (area.removeFromTop (knobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation });
+    area.removeFromTop (kKnobRowGap);
     placeKnobs (area, { &lowOctave, &highOctave, &channel, &cycleLength, &seed });
 }
