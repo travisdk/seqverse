@@ -67,6 +67,7 @@ int main (int argc, char** argv)
     std::printf ("arpeggio, 100 %%, no velocity variation (the defaults)\n");
     check (enabled ("arpDirection"), "arp direction is enabled");
     check (! enabled ("seed"), "the seed is disabled: nothing is random");
+    check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("arpeggio");
 
@@ -74,8 +75,22 @@ int main (int argc, char** argv)
     *processor.playModeParam = music::randomNotes;
     check (! enabled ("arpDirection"), "arp direction is disabled");
     check (enabled ("seed"), "the seed is enabled");
+    check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("random");
+
+    std::printf ("euclidean mode\n");
+    *processor.playModeParam = music::euclidean;
+    check (enabled ("arpDirection"), "arp direction is enabled: the pulses walk the scale");
+    check (enabled ("euclidSteps") && enabled ("euclidPulses") && enabled ("euclidRotation"), "the Euclidean settings are enabled");
+    check (! enabled ("seed"), "the seed is disabled: nothing is random at 100 %");
+    check (othersEnabled(), "all the other controls are enabled");
+    *processor.chanceParam = 70;
+    check (enabled ("seed"), "the seed is enabled with a chance below 100 %");
+    *processor.chanceParam = 100;
+    *processor.euclidStepsParam = 12;
+    *processor.euclidPulsesParam = 7;
+    snapshot ("euclidean");
 
     std::printf ("back to arpeggio\n");
     *processor.playModeParam = music::arpeggio;

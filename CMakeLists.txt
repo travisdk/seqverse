@@ -36,6 +36,7 @@ juce_add_plugin(GenerativeMidi
 
 target_sources(GenerativeMidi PRIVATE
     src/DarkLookAndFeel.h
+    src/EuclidDisplay.h
     src/Music.h
     src/PluginProcessor.cpp
     src/PluginProcessor.h

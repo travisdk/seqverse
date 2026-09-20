@@ -485,6 +485,9 @@ int main (int argc, char** argv)
             { "Velocity Variation", 64, false },
             { "Channel", 15, false },
             { "Cycle Length", music::kMaxCycleHalfBeats, false },
+            { "Euclid Steps", music::kMaxEuclidSteps - 1, false },
+            { "Euclid Pulses", music::kMaxEuclidSteps, false },
+            { "Euclid Rotation", music::kMaxEuclidSteps - 1, false },
             { "Seed", 9999, false },
         };
         for (const auto& expected : spans)
@@ -758,6 +761,117 @@ int main (int argc, char** argv)
         automatic.params.back() = { "Seed", "Auto" };
         check (noteNumbers (notesOf (run (automatic), 0x90)) != noteNumbers (notesOf (run (automatic), 0x90)),
                "seed Auto gives different notes each time");
+    }
+
+    std::printf ("euclidean rhythms: the pattern generator\n");
+    {
+        const auto pattern = [] (int pulses, int steps, int rotation = 0)
+        {
+            const music::EuclidPattern p (steps, pulses, rotation);
+            std::string s;
+            for (int i = 0; i < p.steps; ++i)
+                s += p.onset[i] ? 'x' : '.';
+            return s;
+        };
+
+        // The classics, as written in the literature on Euclidean rhythms
+        check (pattern (3, 8) == "x..x..x." && pattern (5, 8) == "x.xx.xx." && pattern (2, 5) == "x.x.." && pattern (4, 9) == "x.x.x.x..",
+               "E(3,8) x..x..x., E(5,8) x.xx.xx., E(2,5) x.x.., E(4,9) x.x.x.x..");
+        check (pattern (3, 4) == "xxx." && pattern (1, 4) == "x..." && pattern (0, 4) == "...." && pattern (4, 4) == "xxxx",
+               "the edges: 3 in 4, 1 in 4, none, and all");
+        check (pattern (3, 8, 1) == ".x..x..x" && pattern (3, 8, 3) == ".x.x..x." && pattern (3, 8, 8) == pattern (3, 8),
+               "rotation moves the pattern later, and wraps round");
+        check (pattern (9, 4) == "xxxx" && pattern (-2, 4) == "...." && pattern (3, 0) == "x" && pattern (3, 99).size() == 32,
+               "out of range values are limited: pulses to 0..steps, steps to 1..32");
+
+        // What makes a rhythm Euclidean, for every size: exactly that many onsets, and the gaps between onsets, going
+        // round the pattern, differ by at most one step. Checked with a few rotations, and pulse numbering
+        // against a plain count.
+        int wrong = 0;
+        for (int steps = 1; steps <= music::kMaxEuclidSteps; ++steps)
+            for (int pulses = 0; pulses <= steps; ++pulses)
+                for (int rotation : { 0, 1, 5, 31 })
+                {
+                    const music::EuclidPattern p (steps, pulses, rotation);
+                    int count = 0, first = -1, previous = -1, smallest = 999, largest = 0;
+                    for (int i = 0; i < steps; ++i)
+                        if (p.onset[i])
+                        {
+                            ++count;
+                            first = first < 0 ? i : first;
+                            if (previous >= 0)
+                            {
+                                smallest = std::min (smallest, i - previous);
+                                largest = std::max (largest, i - previous);
+                            }
+                            previous = i;
+                        }
+
+                    bool ok = count == pulses;
+                    if (pulses >= 2)
+                    {
+                        smallest = std::min (smallest, first + steps - previous);
+                        largest = std::max (largest, first + steps - previous);
+                        ok &= largest - smallest <= 1;
+                    }
+
+                    int64_t counted = 0;
+                    for (int64_t s = 0; s < 3 * steps; ++s)
+                    {
+                        ok &= p.pulseNumber (s) == counted;
+                        counted += p.isOnset (s) ? 1 : 0;
+                    }
+
+                    // before step 0 the numbering continues backwards, a whole pattern of pulses at a time
+                    for (int64_t s = -2 * steps; s < 0; ++s)
+                        ok &= p.pulseNumber (s) == p.pulseNumber (s + steps) - pulses;
+
+                    wrong += ok ? 0 : 1;
+                }
+        check (wrong == 0, "every size 1..32 with every number of pulses: right count, gaps within one step, pulses numbered right");
+    }
+
+    // Euclidean mode at 1/8 steps: with 3 pulses in 8 steps the onsets are x..x..x., so notes start on steps 0, 3, 6,
+    // 8, 11 ... and each pulse plays the next note of the arpeggio
+    std::printf ("euclidean mode\n");
+    {
+        Scenario s;
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" } };
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), { { 60, 0 }, { 62, 3 * step }, { 64, 6 * step }, { 65, 8 * step } }),
+               "E(3,8): C on step 0, D on 3, E on 6, F on 8: the pulses walk the scale");
+
+        s.rawParams = { { "Play Mode", 2 } }; // picked by value, the way a host does it
+        s.params = { { "Euclid Steps", "8" }, { "Euclid Pulses", "3" } };
+        check (sameNotes (notesOf (run (s), 0x90), { { 60, 0 }, { 62, 3 * step }, { 64, 6 * step }, { 65, 8 * step } }),
+               "and the same when the mode is picked by value");
+
+        s = Scenario();
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" }, { "Euclid Rotation", "1" } };
+        check (sameNotes (notesOf (run (s), 0x90), { { 60, 1 * step }, { 62, 4 * step }, { 64, 7 * step } }), "rotation 1: the pattern is a step later");
+
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" }, { "Arp Direction", "Down" } };
+        check (sameNotes (notesOf (run (s), 0x90), { { 71, 0 }, { 69, 3 * step }, { 67, 6 * step }, { 65, 8 * step } }),
+               "the arp direction applies to the pulses: Down goes B A G F");
+
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "4" }, { "Euclid Pulses", "6" } };
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 7)), "more pulses than steps: every step plays");
+
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Pulses", "0" } };
+        check (run (s).empty(), "no pulses: silence");
+
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" }, { "Chance", "0" } };
+        check (run (s).empty(), "chance 0: silence, chance still applies to the pulses");
+
+        // The pattern restarts with each cycle: 2 beats are four steps, so only the pulses on steps 0 and 3 exist
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" }, { "Cycle Length", "2" } };
+        check (sameNotes (notesOf (run (s), 0x90), { { 60, 0 }, { 62, 3 * step }, { 60, 4 * step }, { 62, 7 * step }, { 60, 8 * step } }),
+               "in a 2 beat cycle the pattern starts over every four steps");
+
+        s = Scenario();
+        s.params = { { "Play Mode", "Euclidean" }, { "Euclid Steps", "8" }, { "Euclid Pulses", "3" }, { "Euclid Rotation", "1" } };
+        s.roundTripState = true;
+        check (sameNotes (notesOf (run (s), 0x90), { { 60, 1 * step }, { 62, 4 * step }, { 64, 7 * step } }), "mode, steps, pulses and rotation come back");
     }
 
     // 4.5 beats are nine 1/8 steps, so C major (7 notes) going up starts over after every nine steps: C D E F G A B C D | C D E ...

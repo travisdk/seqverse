@@ -70,8 +70,8 @@ constexpr Scale scales[] = {
 };
 constexpr int kNumScales = (int) (sizeof (scales) / sizeof (scales[0]));
 
-enum PlayMode { arpeggio, randomNotes, numPlayModes };
-constexpr const char* playModeNames[numPlayModes] = { "Arpeggio", "Random" };
+enum PlayMode { arpeggio, randomNotes, euclidean, numPlayModes };
+constexpr const char* playModeNames[numPlayModes] = { "Arpeggio", "Random", "Euclidean" };
 
 enum ArpDirection { up, down, upDown, downUp, upAndDown, converge, diverge, numArpDirections };
 constexpr const char* arpDirectionNames[numArpDirections] = { "Up",
@@ -123,6 +123,117 @@ struct StepRandom
 
     // 0 .. n-1
     constexpr int nextInt (int n) { return (int) ((next() >> 33) % (std::uint64_t) n); }
+};
+
+// A Euclidean rhythm: `pulses` onsets spread as evenly as possible over `steps` steps, made with Bjorklund's
+// algorithm, so E(3,8) is x..x..x. and E(5,8) is x.xx.xx. The pattern starts on an onset, and `rotation` moves it
+// later by that many steps (wrapping round). It repeats every `steps` steps, and pulses are numbered from the start
+// of step 0 upwards, which is what the arpeggio position of the notes follows.
+constexpr int kMaxEuclidSteps = 32;
+constexpr int kDefaultEuclidSteps = 8;
+constexpr int kDefaultEuclidPulses = 5;
+
+struct EuclidPattern
+{
+    int steps;
+    int pulses;
+    bool onset[kMaxEuclidSteps] = {};
+    int pulsesBefore[kMaxEuclidSteps + 1] = {}; // onsets at the positions below p, for p up to steps
+
+    // Any values are accepted: steps is limited to 1..32, pulses to 0..steps, and the rotation wraps round
+    EuclidPattern (int stepsIn, int pulsesIn, int rotation)
+        : steps (stepsIn < 1 ? 1 : stepsIn > kMaxEuclidSteps ? kMaxEuclidSteps : stepsIn), pulses (0)
+    {
+        pulses = pulsesIn < 0 ? 0 : pulsesIn > steps ? steps : pulsesIn;
+
+        bool base[kMaxEuclidSteps] = {};
+        bjorklund (base);
+
+        const int shift = ((rotation % steps) + steps) % steps;
+        for (int i = 0; i < steps; ++i)
+            onset[(i + shift) % steps] = base[i];
+
+        int count = 0;
+        for (int i = 0; i < steps; ++i)
+        {
+            pulsesBefore[i] = count;
+            count += onset[i] ? 1 : 0;
+        }
+        pulsesBefore[steps] = count;
+    }
+
+    // Steps are counted from 0 and may be negative (before the start of the timeline)
+    int position (std::int64_t step) const { return (int) (((step % steps) + steps) % steps); }
+    bool isOnset (std::int64_t step) const { return onset[position (step)]; }
+
+    // How many onsets came before this step, counting from step 0: the number of this onset if it is one
+    std::int64_t pulseNumber (std::int64_t step) const
+    {
+        const int p = position (step);
+        return (step - p) / steps * pulses + pulsesBefore[p];
+    }
+
+private:
+    struct Builder
+    {
+        const int* counts;
+        const int* remainders;
+        int* pattern;
+        int length;
+
+        void build (int level)
+        {
+            if (level == -1)
+                pattern[length++] = 0;
+            else if (level == -2)
+                pattern[length++] = 1;
+            else
+            {
+                for (int i = 0; i < counts[level]; ++i)
+                    build (level - 1);
+                if (remainders[level] != 0)
+                    build (level - 2);
+            }
+        }
+    };
+
+    void bjorklund (bool (&out)[kMaxEuclidSteps]) const
+    {
+        if (pulses == 0)
+            return;
+
+        if (pulses == steps)
+        {
+            for (int i = 0; i < steps; ++i)
+                out[i] = true;
+            return;
+        }
+
+        int counts[kMaxEuclidSteps + 2] = {};
+        int remainders[kMaxEuclidSteps + 2] = {};
+        int divisor = steps - pulses;
+        remainders[0] = pulses;
+
+        int level = 0;
+        do
+        {
+            counts[level] = divisor / remainders[level];
+            remainders[level + 1] = divisor % remainders[level];
+            divisor = remainders[level];
+            ++level;
+        } while (remainders[level] > 1);
+        counts[level] = divisor;
+
+        int pattern[kMaxEuclidSteps] = {};
+        Builder builder { counts, remainders, pattern, 0 };
+        builder.build (level);
+
+        int first = 0;
+        while (first < steps - 1 && pattern[first] == 0)
+            ++first;
+        for (int i = 0; i < steps; ++i)
+            out[i] = pattern[(i + first) % steps] != 0;
+    }
 };
 
 // Index into the pool of `size` notes (0 is the lowest) for arp step number `step`, which counts up forever.

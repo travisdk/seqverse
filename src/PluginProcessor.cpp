@@ -78,41 +78,56 @@ GenerativeMidiProcessor::GenerativeMidiProcessor()
                                            .withValueFromStringFunction ([] (const juce::String& text)
                                                                          { return text.trim().equalsIgnoreCase ("auto") ? 0 : text.getIntValue(); })));
 
-    lowOctaveParam->addListener (this);
-    highOctaveParam->addListener (this);
+    // Euclidean mode. The default is E(5,8), x.xx.xx.
+    addParameter (euclidStepsParam = new Int ({ "euclidSteps", 1 }, "Euclid Steps", 1, music::kMaxEuclidSteps, music::kDefaultEuclidSteps));
+    addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Euclid Pulses", 0, music::kMaxEuclidSteps, music::kDefaultEuclidPulses));
+    addParameter (euclidRotationParam = new Int ({ "euclidRotation", 1 }, "Euclid Rotation", 0, music::kMaxEuclidSteps - 1, 0));
+
+    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
+        parameter->addListener (this);
 }
 
 GenerativeMidiProcessor::~GenerativeMidiProcessor()
 {
-    lowOctaveParam->removeListener (this);
-    highOctaveParam->removeListener (this);
+    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
+        parameter->removeListener (this);
+
     cancelPendingUpdate();
 }
 
 void GenerativeMidiProcessor::parameterValueChanged (int parameterIndex, float)
 {
     // May be called from any thread, including the audio thread when the host automates the parameter.
-    if (parameterIndex == lowOctaveParam->getParameterIndex())
-        lastChangedOctave = 1;
-    else if (parameterIndex == highOctaveParam->getParameterIndex())
-        lastChangedOctave = 2;
-    else
-        return;
-
-    triggerAsyncUpdate();
+    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
+        if (parameterIndex == parameter->getParameterIndex())
+        {
+            lastChangedParameter = parameterIndex;
+            triggerAsyncUpdate();
+            return;
+        }
 }
 
 void GenerativeMidiProcessor::handleAsyncUpdate()
 {
-    const int low = lowOctaveParam->get();
-    const int high = highOctaveParam->get();
-    if (low <= high)
-        return;
+    const int lastChanged = lastChangedParameter;
 
-    if (lastChangedOctave == 1)
-        *highOctaveParam = low;
-    else
-        *lowOctaveParam = high;
+    // The low octave is not above the high one: the one that was not just changed follows
+    if (lowOctaveParam->get() > highOctaveParam->get())
+    {
+        if (lastChanged == lowOctaveParam->getParameterIndex())
+            *highOctaveParam = lowOctaveParam->get();
+        else
+            *lowOctaveParam = highOctaveParam->get();
+    }
+
+    // Same for the Euclidean pulses, which cannot be more than the steps
+    if (euclidPulsesParam->get() > euclidStepsParam->get())
+    {
+        if (lastChanged == euclidPulsesParam->getParameterIndex())
+            *euclidStepsParam = euclidPulsesParam->get();
+        else
+            *euclidPulsesParam = euclidStepsParam->get();
+    }
 }
 
 void GenerativeMidiProcessor::prepareToPlay (double newSampleRate, int)
@@ -168,8 +183,11 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     // Settings for this block
     const auto& scale = music::scales[scaleParam->getIndex()];
     const int key = keyParam->getIndex();
-    const bool arpeggiate = playModeParam->getIndex() == music::arpeggio;
+    const int playMode = playModeParam->getIndex();
     const int direction = arpDirectionParam->getIndex();
+
+    // Euclidean mode: whatever the three parameters say, the pattern has 1 to 32 steps and up to that many pulses
+    const music::EuclidPattern euclid (euclidStepsParam->get(), euclidPulsesParam->get(), euclidRotationParam->get());
     const double stepQuarters = music::stepRateQuarters[stepRateParam->getIndex()];
     const double swingDelayQuarters = swingParam->get() / 100.0 * stepQuarters / 3.0; // 100 %: the off-beat of a triplet
     const double noteLengthSamples = music::noteLengthQuarters[noteLengthParam->getIndex()] * samplesPerQuarter;
@@ -201,9 +219,9 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     newNotes.clear();
 
-    // Plays one step that starts at `stepStart` (in quarters): `arpStep` is its position in the arpeggio and
-    // `randomState` seeds its random numbers.
-    const auto playStep = [&] (double stepStart, juce::int64 arpStep, std::uint64_t randomState)
+    // Plays step number `step` (its number in its cycle, or on the timeline when there is no cycle) that starts at
+    // `stepStart` (in quarters). `randomState` seeds its random numbers.
+    const auto playStep = [&] (double stepStart, juce::int64 step, std::uint64_t randomState)
     {
         // All the randomness of a step comes from one generator, so it does not depend on the other settings
         auto stepRandom = music::StepRandom { randomState };
@@ -211,10 +229,16 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         const int noteDraw = stepRandom.nextInt (poolSize);
         const int velocityDraw = stepRandom.nextInt (2 * velocityVariation + 1);
 
+        // Euclidean mode plays the steps that are pulses of the pattern, and the pulses walk the pool
+        // in the arp direction (the pulse number is the position in the arpeggio)
+        if (playMode == music::euclidean && ! euclid.isOnset (step))
+            return;
+
         if (chanceDraw >= chancePercent)
             return;
 
-        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, arpStep) : noteDraw;
+        const juce::int64 arpPosition = playMode == music::euclidean ? euclid.pulseNumber (step) : step;
+        const int poolIndex = playMode == music::randomNotes ? noteDraw : music::arpIndex (direction, poolSize, arpPosition);
         const int note = music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size]);
 
         const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepStart - startQuarters) * samplesPerQuarter);
