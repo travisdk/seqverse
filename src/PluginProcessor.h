@@ -60,9 +60,6 @@ public:
     juce::AudioParameterInt* velocityVariationParam = nullptr; // plus or minus
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16
     juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is endless
-    juce::AudioParameterInt* euclidStepsParam = nullptr;       // Euclidean mode: the pattern's length in steps
-    juce::AudioParameterInt* euclidPulsesParam = nullptr;      // ... its onsets, never more than the steps, see below
-    juce::AudioParameterInt* euclidRotationParam = nullptr;    // ... and how many steps it is moved later
     juce::AudioParameterInt* seedParam = nullptr;              // 0 is a different sequence every time
 
 private:
@@ -81,9 +78,8 @@ private:
         int position; // samples from the start of the current block
     };
 
-    // The low octave must not be above the high octave, and the Euclidean pulses not above its steps. processBlock
-    // copes with any combination, and this keeps the parameters themselves consistent: of each pair, the one that was
-    // not just changed follows, on the message thread.
+    // The low octave must not be above the high octave. processBlock copes with any combination, and this keeps the
+    // two parameters themselves consistent: the one that was not just changed follows, on the message thread.
     void parameterValueChanged (int parameterIndex, float newValue) override;
     void parameterGestureChanged (int, bool) override {}
     void handleAsyncUpdate() override;
@@ -98,7 +94,7 @@ private:
     int autoSeed = 1;
     int lastCycleHalfBeats = -1;
 
-    std::atomic<int> lastChangedParameter { -1 }; // the index of the last changed parameter of those in a pair
+    std::atomic<int> lastChangedParameter { -1 }; // the index of the octave parameter that changed last
 
     std::vector<PendingNoteOff> pendingNoteOffs;
     std::vector<NewNote> newNotes;

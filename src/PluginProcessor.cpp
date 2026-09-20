@@ -78,56 +78,37 @@ SeqVerseProcessor::SeqVerseProcessor()
                                            .withValueFromStringFunction ([] (const juce::String& text)
                                                                          { return text.trim().equalsIgnoreCase ("auto") ? 0 : text.getIntValue(); })));
 
-    // Euclidean mode. The default is E(5,8), x.xx.xx.
-    addParameter (euclidStepsParam = new Int ({ "euclidSteps", 1 }, "Euclid Steps", 1, music::kMaxEuclidSteps, music::kDefaultEuclidSteps));
-    addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Euclid Pulses", 0, music::kMaxEuclidSteps, music::kDefaultEuclidPulses));
-    addParameter (euclidRotationParam = new Int ({ "euclidRotation", 1 }, "Euclid Rotation", 0, music::kMaxEuclidSteps - 1, 0));
-
-    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
-        parameter->addListener (this);
+    lowOctaveParam->addListener (this);
+    highOctaveParam->addListener (this);
 }
 
 SeqVerseProcessor::~SeqVerseProcessor()
 {
-    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
-        parameter->removeListener (this);
-
+    lowOctaveParam->removeListener (this);
+    highOctaveParam->removeListener (this);
     cancelPendingUpdate();
 }
 
 void SeqVerseProcessor::parameterValueChanged (int parameterIndex, float)
 {
     // May be called from any thread, including the audio thread when the host automates the parameter.
-    for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
-        if (parameterIndex == parameter->getParameterIndex())
-        {
-            lastChangedParameter = parameterIndex;
-            triggerAsyncUpdate();
-            return;
-        }
+    if (parameterIndex != lowOctaveParam->getParameterIndex() && parameterIndex != highOctaveParam->getParameterIndex())
+        return;
+
+    lastChangedParameter = parameterIndex;
+    triggerAsyncUpdate();
 }
 
 void SeqVerseProcessor::handleAsyncUpdate()
 {
-    const int lastChanged = lastChangedParameter;
-
     // The low octave is not above the high one: the one that was not just changed follows
-    if (lowOctaveParam->get() > highOctaveParam->get())
-    {
-        if (lastChanged == lowOctaveParam->getParameterIndex())
-            *highOctaveParam = lowOctaveParam->get();
-        else
-            *lowOctaveParam = highOctaveParam->get();
-    }
+    if (lowOctaveParam->get() <= highOctaveParam->get())
+        return;
 
-    // Same for the Euclidean pulses, which cannot be more than the steps
-    if (euclidPulsesParam->get() > euclidStepsParam->get())
-    {
-        if (lastChanged == euclidPulsesParam->getParameterIndex())
-            *euclidStepsParam = euclidPulsesParam->get();
-        else
-            *euclidPulsesParam = euclidStepsParam->get();
-    }
+    if (lastChangedParameter == lowOctaveParam->getParameterIndex())
+        *highOctaveParam = lowOctaveParam->get();
+    else
+        *lowOctaveParam = highOctaveParam->get();
 }
 
 void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
@@ -183,11 +164,8 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // Settings for this block
     const auto& scale = music::scales[scaleParam->getIndex()];
     const int key = keyParam->getIndex();
-    const int playMode = playModeParam->getIndex();
+    const bool arpeggiate = playModeParam->getIndex() == music::arpeggio;
     const int direction = arpDirectionParam->getIndex();
-
-    // Euclidean mode: whatever the three parameters say, the pattern has 1 to 32 steps and up to that many pulses
-    const music::EuclidPattern euclid (euclidStepsParam->get(), euclidPulsesParam->get(), euclidRotationParam->get());
     const double stepQuarters = music::stepRateQuarters[stepRateParam->getIndex()];
     const double swingDelayQuarters = swingParam->get() / 100.0 * stepQuarters / 3.0; // 100 %: the off-beat of a triplet
     const double noteLengthSamples = music::noteLengthQuarters[noteLengthParam->getIndex()] * samplesPerQuarter;
@@ -229,16 +207,10 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         const int noteDraw = stepRandom.nextInt (poolSize);
         const int velocityDraw = stepRandom.nextInt (2 * velocityVariation + 1);
 
-        // Euclidean mode plays the steps that are pulses of the pattern, and the pulses walk the pool
-        // in the arp direction (the pulse number is the position in the arpeggio)
-        if (playMode == music::euclidean && ! euclid.isOnset (step))
-            return;
-
         if (chanceDraw >= chancePercent)
             return;
 
-        const juce::int64 arpPosition = playMode == music::euclidean ? euclid.pulseNumber (step) : step;
-        const int poolIndex = playMode == music::randomNotes ? noteDraw : music::arpIndex (direction, poolSize, arpPosition);
+        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, step) : noteDraw;
         const int note = music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size]);
 
         const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepStart - startQuarters) * samplesPerQuarter);

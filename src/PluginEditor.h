@@ -1,7 +1,6 @@
 #pragma once
 
 #include "DarkLookAndFeel.h"
-#include "EuclidDisplay.h"
 #include "PluginProcessor.h"
 
 class SeqVerseEditor : public juce::AudioProcessorEditor
@@ -35,7 +34,6 @@ private:
 
     // Controls that have no effect with the current settings are disabled (dimmed), label included.
     void updateEnabledControls();
-    void updateEuclidDisplay();
     static void setEnabled (Selector&, bool);
     static void setEnabled (Knob&, bool);
 
@@ -47,8 +45,6 @@ private:
     Selector key, scale, stepRate, playMode, arpDirection;
     Knob chance, noteLength, swing, velocity, velocityVariation;
     Knob lowOctave, highOctave, channel, cycleLength, seed;
-    Knob euclidSteps, euclidPulses, euclidRotation;
-    EuclidDisplay euclidDisplay;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };

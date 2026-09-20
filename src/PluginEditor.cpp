@@ -7,14 +7,14 @@ namespace
 // that it does not cover the seed knob.
 constexpr int kFooterHeight = 70;
 
-// Three rows of knobs, with space between them so that the value boxes of one do not crowd the labels of the next
-constexpr int kKnobRowHeight = 150;
+// Two rows of knobs, with space between them so that the value boxes of the first do not crowd the labels of the second
+constexpr int kKnobRowHeight = 160;
 constexpr int kKnobRowGap = 30;
 constexpr int kKnobsPerRow = 5;
 
 // Above the knobs: the margins, the title, and the two rows of selectors (196 pixels), then the footer without the
 // margin that is already counted
-constexpr int kHeight = 196 + (kFooterHeight - 16) + 3 * kKnobRowHeight + 2 * kKnobRowGap;
+constexpr int kHeight = 196 + (kFooterHeight - 16) + 2 * kKnobRowHeight + kKnobRowGap;
 }
 
 SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
@@ -53,20 +53,11 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
     setUpKnob (seed, "Seed", *processor.seedParam);
 
-    setUpKnob (euclidSteps, "Euclid steps", *processor.euclidStepsParam);
-    setUpKnob (euclidPulses, "Euclid pulses", *processor.euclidPulsesParam);
-    setUpKnob (euclidRotation, "Euclid rotation", *processor.euclidRotationParam);
-    addAndMakeVisible (euclidDisplay);
-
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
-    euclidSteps.slider.onValueChange = [this] { updateEuclidDisplay(); };
-    euclidPulses.slider.onValueChange = [this] { updateEuclidDisplay(); };
-    euclidRotation.slider.onValueChange = [this] { updateEuclidDisplay(); };
     updateEnabledControls();
-    updateEuclidDisplay();
 
     // The value boxes of the sliders were made before the sliders were children of the editor, so they did not know
     // about its look yet. This makes every control take it.
@@ -82,29 +73,15 @@ SeqVerseEditor::~SeqVerseEditor()
 
 void SeqVerseEditor::updateEnabledControls()
 {
-    const int mode = processor.playModeParam->getIndex();
-    const bool randomMode = mode == music::randomNotes;
-    const bool euclideanMode = mode == music::euclidean;
+    const bool arpeggio = processor.playModeParam->getIndex() == music::arpeggio;
 
-    // The arpeggio walks the pool in a direction, and so do the pulses of a Euclidean pattern. Random mode does not.
-    setEnabled (arpDirection, ! randomMode);
-
-    // The Euclidean settings are for the Euclidean mode only
-    for (auto* knob : { &euclidSteps, &euclidPulses, &euclidRotation })
-        setEnabled (*knob, euclideanMode);
-    euclidDisplay.setEnabled (euclideanMode);
+    // Only the arpeggio walks the pool in a direction
+    setEnabled (arpDirection, arpeggio);
 
     // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
-    // variation. An arpeggio or a Euclidean pattern at 100 % with a fixed velocity has nothing to seed.
-    const bool anythingRandom = randomMode || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0;
+    // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
+    const bool anythingRandom = ! arpeggio || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0;
     setEnabled (seed, anythingRandom);
-}
-
-void SeqVerseEditor::updateEuclidDisplay()
-{
-    // The same limits the processor applies, so that the display shows what is played
-    euclidDisplay.setPattern (music::EuclidPattern (processor.euclidStepsParam->get(), processor.euclidPulsesParam->get(),
-                                                    processor.euclidRotationParam->get()));
 }
 
 void SeqVerseEditor::setEnabled (Selector& selector, bool enabled)
@@ -174,8 +151,7 @@ void SeqVerseEditor::resized()
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 
-    // Knobs: a grid of five columns and three rows. Every row uses the same column width, so the third row, which has
-    // three knobs, is followed by the pattern display in its last two columns.
+    // Knobs: a grid of five columns and two rows
     const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
     {
         const int width = row.getWidth() / kKnobsPerRow;
@@ -190,9 +166,4 @@ void SeqVerseEditor::resized()
     placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation });
     area.removeFromTop (kKnobRowGap);
     placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &channel, &cycleLength, &seed });
-    area.removeFromTop (kKnobRowGap);
-
-    auto euclidRow = area.removeFromTop (kKnobRowHeight);
-    placeKnobs (euclidRow, { &euclidSteps, &euclidPulses, &euclidRotation });
-    euclidDisplay.setBounds (euclidRow.withTrimmedLeft (euclidRow.getWidth() / kKnobsPerRow * 3));
 }

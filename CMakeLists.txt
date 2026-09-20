@@ -36,7 +36,6 @@ juce_add_plugin(SeqVerse
 
 target_sources(SeqVerse PRIVATE
     src/DarkLookAndFeel.h
-    src/EuclidDisplay.h
     src/Music.h
     src/PluginProcessor.cpp
     src/PluginProcessor.h
