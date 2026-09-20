@@ -65,26 +65,26 @@ int main (int argc, char** argv)
     };
 
     std::printf ("arpeggio, 100 %%, no velocity variation (the defaults)\n");
-    check (enabled ("arpDirection") && enabled ("arpReset"), "arp direction and arp reset are enabled");
+    check (enabled ("arpDirection"), "arp direction is enabled");
     check (! enabled ("seed"), "the seed is disabled: nothing is random");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("arpeggio");
 
     std::printf ("random mode\n");
     *processor.playModeParam = music::randomNotes;
-    check (! enabled ("arpDirection") && ! enabled ("arpReset"), "arp direction and arp reset are disabled");
+    check (! enabled ("arpDirection"), "arp direction is disabled");
     check (enabled ("seed"), "the seed is enabled");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("random");
 
     std::printf ("back to arpeggio\n");
     *processor.playModeParam = music::arpeggio;
-    check (enabled ("arpDirection") && enabled ("arpReset") && ! enabled ("seed"), "as at the start");
+    check (enabled ("arpDirection") && ! enabled ("seed"), "as at the start");
 
     std::printf ("arpeggio with a chance below 100 %%\n");
     *processor.chanceParam = 60;
     check (enabled ("seed"), "the seed is enabled: which steps play is random");
-    check (enabled ("arpDirection") && enabled ("arpReset"), "arp direction and arp reset are still enabled");
+    check (enabled ("arpDirection"), "arp direction is still enabled");
     snapshot ("arpeggio_chance60");
     *processor.chanceParam = 100;
     check (! enabled ("seed"), "the seed is disabled again at 100 %");
@@ -119,14 +119,8 @@ int main (int argc, char** argv)
 
         *processor.cycleLengthParam = 9;
         check (knob != nullptr && juce::roundToInt (knob->getValue()) == 9, "the knob follows the parameter");
-        check (enabled ("arpDirection") && ! enabled ("arpReset"), "in a cycle the arp restarts every cycle, so arp reset is disabled");
-        check (! enabled ("seed") && othersEnabled(), "nothing else changes");
+        check (enabled ("arpDirection") && ! enabled ("seed") && othersEnabled(), "a cycle changes nothing about which controls are enabled");
         snapshot ("cycle");
-
-        *processor.playModeParam = music::randomNotes;
-        *processor.cycleLengthParam = 0;
-        *processor.playModeParam = music::arpeggio;
-        check (enabled ("arpDirection") && enabled ("arpReset"), "arp reset is enabled again at Endless");
     }
 
     std::printf ("every control has a parameter behind it\n");

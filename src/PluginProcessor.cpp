@@ -59,7 +59,6 @@ GenerativeMidiProcessor::GenerativeMidiProcessor()
     addParameter (scaleParam = new Choice ({ "scale", 1 }, "Scale", scaleNames(), 0));
     addParameter (playModeParam = new Choice ({ "playMode", 1 }, "Play Mode", namesOf (music::playModeNames), music::arpeggio));
     addParameter (arpDirectionParam = new Choice ({ "arpDirection", 1 }, "Arp Direction", namesOf (music::arpDirectionNames), music::up));
-    addParameter (arpResetParam = new Choice ({ "arpReset", 1 }, "Arp Reset", namesOf (music::arpResetNames), music::followTimeline));
     addParameter (stepRateParam = new Choice ({ "stepRate", 1 }, "Step Rate", namesOf (music::stepRateNames), music::kDefaultStepRate));
     addParameter (noteLengthParam = new Choice ({ "noteLength", 1 }, "Note Length", namesOf (music::noteLengthNames), 1));
     addParameter (chanceParam = new Int ({ "chance", 1 }, "Chance", 0, 100, 100, percent));
@@ -164,8 +163,6 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     internalPpq = endQuarters;
 
     const bool justStarted = ! wasPlaying;
-    if (justStarted)
-        playStartQuarters = startQuarters;
     wasPlaying = true;
 
     // Settings for this block
@@ -173,7 +170,6 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const int key = keyParam->getIndex();
     const bool arpeggiate = playModeParam->getIndex() == music::arpeggio;
     const int direction = arpDirectionParam->getIndex();
-    const bool restartArp = arpResetParam->getIndex() == music::restartOnPlay;
     const double stepQuarters = music::stepRateQuarters[stepRateParam->getIndex()];
     const double swingDelayQuarters = swingParam->get() / 100.0 * stepQuarters / 3.0; // 100 %: the off-beat of a triplet
     const double noteLengthSamples = music::noteLengthQuarters[noteLengthParam->getIndex()] * samplesPerQuarter;
@@ -201,7 +197,6 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     const auto firstStepAtOrAfter = [stepQuarters] (double quarters)
     { return (juce::int64) std::ceil (quarters / stepQuarters - kBoundaryTolerance); };
 
-    const auto restartStep = firstStepAtOrAfter (playStartQuarters);
     const double toleranceQuarters = kBoundaryTolerance * stepQuarters;
 
     newNotes.clear();
@@ -245,7 +240,7 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             const double stepStart = (double) step * stepQuarters + (step % 2 != 0 ? swingDelayQuarters : 0.0);
             if (startsInThisBlock (stepStart))
-                playStep (stepStart, restartArp ? step - restartStep : step,
+                playStep (stepStart, step,
                           seed > 0 ? music::StepRandom::forStep (seed, step).state : (std::uint64_t) random.nextInt64());
         }
     }

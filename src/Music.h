@@ -82,9 +82,6 @@ constexpr const char* arpDirectionNames[numArpDirections] = { "Up",
                                                              "Converge",
                                                              "Diverge" };
 
-enum ArpReset { followTimeline, restartOnPlay, numArpResets };
-constexpr const char* arpResetNames[numArpResets] = { "Follow timeline", "Restart on play" };
-
 // The distance between two steps, in quarter notes. Triplets are 2/3 of the straight value.
 constexpr int kNumStepRates = 9;
 constexpr int kDefaultStepRate = 4; // 1/8

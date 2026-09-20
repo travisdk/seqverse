@@ -29,7 +29,6 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
-    setUpSelector (arpReset, "Arp reset", *processor.arpResetParam);
 
     setUpKnob (chance, "Chance", *processor.chanceParam);
     chance.slider.setTextValueSuffix (" %");
@@ -54,7 +53,6 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     playMode.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
-    cycleLength.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
 
     // The value boxes of the sliders were made before the sliders were children of the editor, so they did not know
@@ -73,10 +71,8 @@ void GenerativeMidiEditor::updateEnabledControls()
 {
     const bool arpeggio = processor.playModeParam->getIndex() == music::arpeggio;
 
-    // Only the arpeggio walks the pool in a direction. It restarts on play unless it runs in a cycle, where
-    // it starts over every cycle and the reset setting has no say.
+    // Only the arpeggio walks the pool in a direction
     setEnabled (arpDirection, arpeggio);
-    setEnabled (arpReset, arpeggio && processor.cycleLengthParam->get() == 0);
 
     // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
     // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
@@ -133,25 +129,21 @@ void GenerativeMidiEditor::resized()
     titleLabel.setBounds (area.removeFromTop (40));
     area.removeFromTop (8);
 
-    // Three selectors across, two rows
-    const auto placeSelectors = [] (juce::Rectangle<int> row, Selector& a, Selector& b, Selector& c)
+    // Selectors in a grid of three columns, two rows. The second row has two, so its third column is empty.
+    const auto placeSelectors = [] (juce::Rectangle<int> row, std::initializer_list<Selector*> selectors)
     {
-        const auto place = [] (juce::Rectangle<int> cell, Selector& selector)
-        {
-            cell.reduce (6, 0);
-            selector.label.setBounds (cell.removeFromTop (20));
-            selector.box.setBounds (cell.removeFromTop (26));
-        };
-
         const int width = row.getWidth() / 3;
-        place (row.removeFromLeft (width), a);
-        place (row.removeFromLeft (width), b);
-        place (row, c);
+        for (auto* selector : selectors)
+        {
+            auto cell = row.removeFromLeft (width).reduced (6, 0);
+            selector->label.setBounds (cell.removeFromTop (20));
+            selector->box.setBounds (cell.removeFromTop (26));
+        }
     };
 
-    placeSelectors (area.removeFromTop (46), key, scale, stepRate);
+    placeSelectors (area.removeFromTop (46), { &key, &scale, &stepRate });
     area.removeFromTop (10);
-    placeSelectors (area.removeFromTop (46), playMode, arpDirection, arpReset);
+    placeSelectors (area.removeFromTop (46), { &playMode, &arpDirection });
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 

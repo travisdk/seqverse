@@ -475,7 +475,6 @@ int main (int argc, char** argv)
             { "Scale", music::kNumScales - 1, true },
             { "Play Mode", music::numPlayModes - 1, true },
             { "Arp Direction", music::numArpDirections - 1, true },
-            { "Arp Reset", music::numArpResets - 1, true },
             { "Step Rate", music::kNumStepRates - 1, true },
             { "Note Length", music::kNumNoteLengths - 1, true },
             { "Chance", 100, false },
@@ -734,15 +733,6 @@ int main (int argc, char** argv)
         for (uint32_t k = 0; k < 33; ++k)
             want.push_back ({ 60 + cMajor[k % 7], k * 3000 + (k % 2 == 1 ? 1000 : 0) });
         check (sameNotes (notesOf (run (s), 0x90), want), "1/32 steps: 33 notes, none twice and none missing");
-    }
-
-    std::printf ("arp reset\n");
-    {
-        Scenario s;
-        s.startQuarters = 1.25;
-        s.numBlocks = 100;
-        s.params = { { "Arp Reset", "Restart on play" } };
-        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65 }, 6000)), "starting between two steps, the arp starts on its first note");
     }
 
     std::printf ("seed\n");

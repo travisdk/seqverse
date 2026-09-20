@@ -50,7 +50,6 @@ public:
     juce::AudioParameterChoice* scaleParam = nullptr;
     juce::AudioParameterChoice* playModeParam = nullptr;
     juce::AudioParameterChoice* arpDirectionParam = nullptr;
-    juce::AudioParameterChoice* arpResetParam = nullptr;
     juce::AudioParameterChoice* stepRateParam = nullptr;
     juce::AudioParameterChoice* noteLengthParam = nullptr;
     juce::AudioParameterInt* chanceParam = nullptr;            // percent
@@ -88,7 +87,6 @@ private:
     double sampleRate = 44100.0;
     double internalPpq = 0.0; // only used when the host does not report its PPQ position
     bool wasPlaying = false;
-    double playStartQuarters = 0.0; // where the transport was when it last started playing
     juce::Random random;
 
     // With a cycle and the seed on Auto, this is the seed of the phrase that repeats. It is rolled again each time the
