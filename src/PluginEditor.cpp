@@ -17,12 +17,12 @@ constexpr int kKnobsPerRow = 5;
 constexpr int kHeight = 196 + (kFooterHeight - 16) + 3 * kKnobRowHeight + 2 * kKnobRowGap;
 }
 
-GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
+SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setLookAndFeel (&look); // the components below take their look from here
 
-    titleLabel.setText ("Generative MIDI", juce::dontSendNotification);
+    titleLabel.setText ("SeqVerse", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
     titleLabel.setFont (juce::Font (28.0f, juce::Font::bold));
     titleLabel.setColour (juce::Label::textColourId, theme::text);
@@ -75,12 +75,12 @@ GenerativeMidiEditor::GenerativeMidiEditor (GenerativeMidiProcessor& p)
     setSize (660, kHeight);
 }
 
-GenerativeMidiEditor::~GenerativeMidiEditor()
+SeqVerseEditor::~SeqVerseEditor()
 {
     setLookAndFeel (nullptr);
 }
 
-void GenerativeMidiEditor::updateEnabledControls()
+void SeqVerseEditor::updateEnabledControls()
 {
     const int mode = processor.playModeParam->getIndex();
     const bool randomMode = mode == music::randomNotes;
@@ -100,26 +100,26 @@ void GenerativeMidiEditor::updateEnabledControls()
     setEnabled (seed, anythingRandom);
 }
 
-void GenerativeMidiEditor::updateEuclidDisplay()
+void SeqVerseEditor::updateEuclidDisplay()
 {
     // The same limits the processor applies, so that the display shows what is played
     euclidDisplay.setPattern (music::EuclidPattern (processor.euclidStepsParam->get(), processor.euclidPulsesParam->get(),
                                                     processor.euclidRotationParam->get()));
 }
 
-void GenerativeMidiEditor::setEnabled (Selector& selector, bool enabled)
+void SeqVerseEditor::setEnabled (Selector& selector, bool enabled)
 {
     selector.label.setEnabled (enabled);
     selector.box.setEnabled (enabled);
 }
 
-void GenerativeMidiEditor::setEnabled (Knob& knob, bool enabled)
+void SeqVerseEditor::setEnabled (Knob& knob, bool enabled)
 {
     knob.label.setEnabled (enabled);
     knob.slider.setEnabled (enabled);
 }
 
-void GenerativeMidiEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
+void SeqVerseEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
 {
     selector.label.setText (text, juce::dontSendNotification);
     addAndMakeVisible (selector.label);
@@ -131,7 +131,7 @@ void GenerativeMidiEditor::setUpSelector (Selector& selector, const juce::String
     selector.attachment = std::make_unique<juce::ComboBoxParameterAttachment> (parameter, selector.box);
 }
 
-void GenerativeMidiEditor::setUpKnob (Knob& knob, const juce::String& text, juce::RangedAudioParameter& parameter)
+void SeqVerseEditor::setUpKnob (Knob& knob, const juce::String& text, juce::RangedAudioParameter& parameter)
 {
     knob.label.setText (text, juce::dontSendNotification);
     knob.label.setJustificationType (juce::Justification::centred);
@@ -145,12 +145,12 @@ void GenerativeMidiEditor::setUpKnob (Knob& knob, const juce::String& text, juce
     knob.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, knob.slider);
 }
 
-void GenerativeMidiEditor::paint (juce::Graphics& g)
+void SeqVerseEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
 }
 
-void GenerativeMidiEditor::resized()
+void SeqVerseEditor::resized()
 {
     auto area = getLocalBounds().reduced (16);
     titleLabel.setBounds (area.removeFromTop (40));

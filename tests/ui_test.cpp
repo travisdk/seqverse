@@ -2,7 +2,7 @@
 // parameters the way a host does, and checks which controls are enabled. Optionally writes PNG snapshots of the
 // editor, so that the layout can be looked at:
 //
-//   GenerativeMidiUiTest [snapshot-prefix]      exit code 0 = all checks passed
+//   SeqVerseUiTest [snapshot-prefix]      exit code 0 = all checks passed
 
 #include "../src/Music.h"
 #include "../src/PluginEditor.h"
@@ -36,7 +36,7 @@ int main (int argc, char** argv)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
 
-    GenerativeMidiProcessor processor;
+    SeqVerseProcessor processor;
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     const std::string snapshotPrefix = argc > 1 ? argv[1] : "";
 

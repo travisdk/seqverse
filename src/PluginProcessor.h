@@ -13,13 +13,13 @@
 //
 // With a cycle length, the step grid restarts every cycle (cycles start at multiples of the cycle length on the host
 // timeline) and everything about a step depends on its number within the cycle, so each cycle repeats the last one.
-class GenerativeMidiProcessor : public juce::AudioProcessor,
+class SeqVerseProcessor : public juce::AudioProcessor,
                                 private juce::AudioProcessorParameter::Listener,
                                 private juce::AsyncUpdater
 {
 public:
-    GenerativeMidiProcessor();
-    ~GenerativeMidiProcessor() override;
+    SeqVerseProcessor();
+    ~SeqVerseProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -103,5 +103,5 @@ private:
     std::vector<PendingNoteOff> pendingNoteOffs;
     std::vector<NewNote> newNotes;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GenerativeMidiProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseProcessor)
 };

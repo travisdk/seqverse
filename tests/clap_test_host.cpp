@@ -48,7 +48,7 @@ void check (bool ok, const char* what)
 }
 
 const clap_host_t host = {
-    CLAP_VERSION, nullptr, "clap_test_host", "generative_midi", nullptr, "0.1",
+    CLAP_VERSION, nullptr, "clap_test_host", "seqverse", nullptr, "0.1",
     [] (const clap_host_t*, const char*) -> const void* { return nullptr; }, // get_extension
     [] (const clap_host_t*) {},                                              // request_restart
     [] (const clap_host_t*) {},                                              // request_process

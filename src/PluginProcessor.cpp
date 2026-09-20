@@ -43,10 +43,10 @@ int cycleLengthFromText (const juce::String& text)
     return juce::jlimit (0, music::kMaxCycleHalfBeats, juce::roundToInt (trimmed.getDoubleValue() * 2.0));
 }
 
-const char* const stateTag = "GenerativeMidi";
+const char* const stateTag = "SeqVerse";
 }
 
-GenerativeMidiProcessor::GenerativeMidiProcessor()
+SeqVerseProcessor::SeqVerseProcessor()
     // A silent stereo output. Some hosts (Bitwig) do not run a plugin that has no audio ports.
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
@@ -87,7 +87,7 @@ GenerativeMidiProcessor::GenerativeMidiProcessor()
         parameter->addListener (this);
 }
 
-GenerativeMidiProcessor::~GenerativeMidiProcessor()
+SeqVerseProcessor::~SeqVerseProcessor()
 {
     for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
         parameter->removeListener (this);
@@ -95,7 +95,7 @@ GenerativeMidiProcessor::~GenerativeMidiProcessor()
     cancelPendingUpdate();
 }
 
-void GenerativeMidiProcessor::parameterValueChanged (int parameterIndex, float)
+void SeqVerseProcessor::parameterValueChanged (int parameterIndex, float)
 {
     // May be called from any thread, including the audio thread when the host automates the parameter.
     for (auto* parameter : { lowOctaveParam, highOctaveParam, euclidStepsParam, euclidPulsesParam })
@@ -107,7 +107,7 @@ void GenerativeMidiProcessor::parameterValueChanged (int parameterIndex, float)
         }
 }
 
-void GenerativeMidiProcessor::handleAsyncUpdate()
+void SeqVerseProcessor::handleAsyncUpdate()
 {
     const int lastChanged = lastChangedParameter;
 
@@ -130,7 +130,7 @@ void GenerativeMidiProcessor::handleAsyncUpdate()
     }
 }
 
-void GenerativeMidiProcessor::prepareToPlay (double newSampleRate, int)
+void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
 {
     sampleRate = newSampleRate;
     internalPpq = 0.0;
@@ -140,13 +140,13 @@ void GenerativeMidiProcessor::prepareToPlay (double newSampleRate, int)
     newNotes.reserve (256);
 }
 
-bool GenerativeMidiProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool SeqVerseProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     return layouts.getMainInputChannelSet().isDisabled()
         && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 }
 
-void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     buffer.clear();
     midi.clear(); // incoming MIDI is not used, only generated notes leave the plugin
@@ -313,12 +313,12 @@ void GenerativeMidiProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         midi.addEvent (juce::MidiMessage::noteOn (newNote.channel, newNote.note, (juce::uint8) newNote.velocity), newNote.position);
 }
 
-juce::AudioProcessorEditor* GenerativeMidiProcessor::createEditor()
+juce::AudioProcessorEditor* SeqVerseProcessor::createEditor()
 {
-    return new GenerativeMidiEditor (*this);
+    return new SeqVerseEditor (*this);
 }
 
-void GenerativeMidiProcessor::getStateInformation (juce::MemoryBlock& destData)
+void SeqVerseProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::XmlElement xml (stateTag);
 
@@ -329,7 +329,7 @@ void GenerativeMidiProcessor::getStateInformation (juce::MemoryBlock& destData)
     copyXmlToBinary (xml, destData);
 }
 
-void GenerativeMidiProcessor::setStateInformation (const void* data, int sizeInBytes)
+void SeqVerseProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (stateTag))
@@ -343,5 +343,5 @@ void GenerativeMidiProcessor::setStateInformation (const void* data, int sizeInB
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new GenerativeMidiProcessor();
+    return new SeqVerseProcessor();
 }

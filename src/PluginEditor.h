@@ -4,11 +4,11 @@
 #include "EuclidDisplay.h"
 #include "PluginProcessor.h"
 
-class GenerativeMidiEditor : public juce::AudioProcessorEditor
+class SeqVerseEditor : public juce::AudioProcessorEditor
 {
 public:
-    explicit GenerativeMidiEditor (GenerativeMidiProcessor&);
-    ~GenerativeMidiEditor() override;
+    explicit SeqVerseEditor (SeqVerseProcessor&);
+    ~SeqVerseEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -39,7 +39,7 @@ private:
     static void setEnabled (Selector&, bool);
     static void setEnabled (Knob&, bool);
 
-    GenerativeMidiProcessor& processor;
+    SeqVerseProcessor& processor;
 
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
 
@@ -50,5 +50,5 @@ private:
     Knob euclidSteps, euclidPulses, euclidRotation;
     EuclidDisplay euclidDisplay;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GenerativeMidiEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };
