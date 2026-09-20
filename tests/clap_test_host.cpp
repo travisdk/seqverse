@@ -244,12 +244,16 @@ struct Scenario
     bool playing = true;
     bool sendTransport = true;
     bool roundTripState = false; // set the parameters on one instance, save, and load into a fresh one
+    std::vector<uint8_t> savedState; // a saved session to load into the instance before anything else
 };
 
 // Runs a scenario on a fresh plugin instance and returns what the plugin emitted.
 std::vector<clap_event_midi_t> run (const Scenario& s)
 {
     Instance inst = createInstance();
+
+    if (! s.savedState.empty())
+        check (loadState (inst, s.savedState), "a saved session was loaded");
 
     std::vector<InEvent> paramEvents;
     for (const auto& [name, text] : s.params)
@@ -581,6 +585,15 @@ int main (int argc, char** argv)
             { music::upAndDown, { 0, 1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1, 0 } },
             { music::converge,  { 0, 6, 1, 5, 2, 4, 3, 0, 6, 1, 5, 2, 4, 3 } },
             { music::diverge,   { 3, 4, 2, 5, 1, 6, 0, 3, 4, 2, 5, 1, 6, 0 } },
+
+            { music::downAndUp,       { 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6 } },
+            { music::convergeDiverge, { 0, 6, 1, 5, 2, 4, 3, 3, 4, 2, 5, 1, 6, 0 } },
+            { music::thumbUp,         { 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 1 } },
+            { music::thumbDown,       { 0, 6, 0, 5, 0, 4, 0, 3, 0, 2, 0, 1, 0, 6 } },
+            { music::pinkyUp,         { 6, 0, 6, 1, 6, 2, 6, 3, 6, 4, 6, 5, 6, 0 } },
+            { music::pinkyDown,       { 6, 5, 6, 4, 6, 3, 6, 2, 6, 1, 6, 0, 6, 5 } },
+            { music::upTwoBackOne,    { 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 0, 2, 1 } },
+            { music::skip,            { 0, 2, 4, 6, 1, 3, 5, 0, 2, 4, 6, 1, 3, 5 } },
         };
 
         for (const auto& pattern : patterns)
@@ -595,6 +608,57 @@ int main (int argc, char** argv)
 
             check (sameNotes (notesOf (run (s), 0x90), grid (notes, 0), true), music::arpDirectionNames[pattern.direction]);
         }
+
+        // Whatever the size of the pool (one octave of a pentatonic scale, or several octaves of a chromatic one), every
+        // direction stays inside it, plays every note of it, and is the same at every step number, also before step 0
+        int wrong = 0;
+        for (int direction = 0; direction < music::numArpDirections; ++direction)
+            for (int size = 1; size <= 96; ++size)
+            {
+                std::vector<bool> seen ((size_t) size, false);
+                bool ok = true;
+                for (int64_t step = -3 * size; step < 5 * size; ++step)
+                {
+                    const int index = music::arpIndex (direction, size, step);
+                    ok &= index >= 0 && index < size;
+                    if (index >= 0 && index < size)
+                        seen[(size_t) index] = true;
+                }
+                ok &= std::find (seen.begin(), seen.end(), false) == seen.end();
+                wrong += ok ? 0 : 1;
+                if (! ok)
+                    std::printf ("    %s with %d notes\n", music::arpDirectionNames[direction], size);
+            }
+        check (wrong == 0, "every direction, for pools of 1 to 96 notes, stays inside the pool and plays all of it");
+    }
+
+    // Sessions saved before there was a state version stored every parameter as a fraction of its range, and the arp
+    // direction list had 7 entries: 0.5 is the fourth, Down/Up, and has to stay Down/Up now that the list is longer.
+    // (The format of the blob is JUCE's: a magic number, the length, and the XML text.)
+    std::printf ("sessions saved by an earlier version\n");
+    {
+        const auto blobOf = [] (const std::string& xml)
+        {
+            std::vector<uint8_t> blob;
+            for (uint32_t word : { 0x21324356u, (uint32_t) xml.size() })
+                for (int i = 0; i < 4; ++i)
+                    blob.push_back ((uint8_t) (word >> (8 * i)));
+            blob.insert (blob.end(), xml.begin(), xml.end());
+            return blob;
+        };
+
+        Scenario s;
+        s.savedState = blobOf ("<SeqVerse arpDirection=\"0.5\"/>");
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 71, 69, 67, 65, 64, 62, 60, 62, 64 }, 0)),
+               "arp direction 0.5 in an old session is still Down/Up: B A G F E D C D E");
+
+        // chance 0.5 of 0..100 is 50, and seed 0.0005 of 0..9999 is 5
+        s.savedState = blobOf ("<SeqVerse chance=\"0.5\" seed=\"0.0005\"/>");
+        Scenario same;
+        same.params = { { "Chance", "50" }, { "Seed", "5" } };
+        const auto fromOldSession = notesOf (run (s), 0x90);
+        check (! fromOldSession.empty() && fromOldSession.size() < 9 && sameNotes (fromOldSession, notesOf (run (same), 0x90)),
+               "chance and seed in an old session are read as fractions of their range: 50 % and 5");
     }
 
     std::printf ("random mode stays in the scale\n");

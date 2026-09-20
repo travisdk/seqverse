@@ -73,14 +73,29 @@ constexpr int kNumScales = (int) (sizeof (scales) / sizeof (scales[0]));
 enum PlayMode { arpeggio, randomNotes, numPlayModes };
 constexpr const char* playModeNames[numPlayModes] = { "Arpeggio", "Random" };
 
-enum ArpDirection { up, down, upDown, downUp, upAndDown, converge, diverge, numArpDirections };
+// What a saved session stores is the index of the choice, so the order here can only grow at the end
+enum ArpDirection { up, down, upDown, downUp, upAndDown, converge, diverge,
+                    downAndUp, convergeDiverge, thumbUp, thumbDown, pinkyUp, pinkyDown, upTwoBackOne, skip,
+                    numArpDirections };
 constexpr const char* arpDirectionNames[numArpDirections] = { "Up",
                                                              "Down",
                                                              "Up/Down",
                                                              "Down/Up",
                                                              "Up & Down (repeat ends)",
                                                              "Converge",
-                                                             "Diverge" };
+                                                             "Diverge",
+                                                             "Down & Up (repeat ends)",
+                                                             "Converge & Diverge",
+                                                             "Thumb Up",
+                                                             "Thumb Down",
+                                                             "Pinky Up",
+                                                             "Pinky Down",
+                                                             "Up 2, Back 1",
+                                                             "Skip (odd, then even)" };
+
+// The number of directions before the later ones were added. Sessions saved back then stored the choice as a fraction
+// of this, see SeqVerseProcessor::setStateInformation.
+constexpr int kNumArpDirectionsInFirstVersion = 7;
 
 // The distance between two steps, in quarter notes. Triplets are 2/3 of the straight value.
 constexpr int kNumStepRates = 9;
@@ -131,16 +146,39 @@ constexpr int arpIndex (int direction, int size, std::int64_t step)
 {
     const auto cycle = [&] (std::int64_t length) { return (int) (((step % length) + length) % length); };
     const auto pingPong = [&] (int pos) { return pos < size ? pos : 2 * size - 2 - pos; }; // 0..n-1, n-2..1
+    const auto outsideIn = [&] (int pos) { return pos % 2 == 0 ? pos / 2 : size - 1 - pos / 2; }; // 0, n-1, 1, n-2 ...
+
+    // Patterns that come back to one note between all the others go through the other n - 1 notes: 2 * (n - 1) steps
+    const int anchored = size > 1 ? 2 * size - 2 : 1;
 
     switch (direction)
     {
-        case down:      return size - 1 - cycle (size);
-        case upDown:    return pingPong (cycle (size > 1 ? 2 * size - 2 : 1));
-        case downUp:    return size - 1 - pingPong (cycle (size > 1 ? 2 * size - 2 : 1));
-        case upAndDown: { const int pos = cycle (2 * size); return pos < size ? pos : 2 * size - 1 - pos; }
-        case converge:  { const int pos = cycle (size); return pos % 2 == 0 ? pos / 2 : size - 1 - pos / 2; }
-        case diverge:   { const int pos = size - 1 - cycle (size); return pos % 2 == 0 ? pos / 2 : size - 1 - pos / 2; }
-        default:        return cycle (size); // up
+        case down:            return size - 1 - cycle (size);
+        case upDown:          return pingPong (cycle (anchored));
+        case downUp:          return size - 1 - pingPong (cycle (anchored));
+        case upAndDown:       { const int pos = cycle (2 * size); return pos < size ? pos : 2 * size - 1 - pos; }
+        case converge:        return outsideIn (cycle (size));
+        case diverge:         return outsideIn (size - 1 - cycle (size));
+        case downAndUp:       { const int pos = cycle (2 * size); return pos < size ? size - 1 - pos : pos - size; }
+        case convergeDiverge: { const int pos = cycle (2 * size); return outsideIn (pos < size ? pos : 2 * size - 1 - pos); }
+        case thumbUp:         { const int pos = cycle (anchored); return pos % 2 == 0 ? 0 : (pos + 1) / 2; }            // 0 1 0 2 0 3 ...
+        case thumbDown:       { const int pos = cycle (anchored); return pos % 2 == 0 ? 0 : size - 1 - (pos - 1) / 2; } // 0 n-1 0 n-2 ...
+        case pinkyUp:         { const int pos = cycle (anchored); return pos % 2 == 0 ? size - 1 : (pos - 1) / 2; }     // n-1 0 n-1 1 ...
+        case pinkyDown:       { const int pos = cycle (anchored); return pos % 2 == 0 ? size - 1 : size - 2 - (pos - 1) / 2; }
+        case upTwoBackOne:    // 0 2 1 3 2 4 ... up to the top and the note below it, then over again
+        {
+            if (size < 3)
+                return cycle (size);
+            const int pos = cycle (2 * size - 3);
+            return pos % 2 == 0 ? pos / 2 : (pos - 1) / 2 + 2;
+        }
+        case skip:            // 0 2 4 6 1 3 5: every other note, then the ones in between
+        {
+            const int evens = (size + 1) / 2;
+            const int pos = cycle (size);
+            return pos < evens ? 2 * pos : 2 * (pos - evens) + 1;
+        }
+        default:              return cycle (size); // up
     }
 }
 } // namespace music

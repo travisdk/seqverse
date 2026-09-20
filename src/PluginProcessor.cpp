@@ -44,6 +44,7 @@ int cycleLengthFromText (const juce::String& text)
 }
 
 const char* const stateTag = "SeqVerse";
+constexpr int stateVersion = 2; // 1: parameters as fractions of their range, 2: as their values
 }
 
 SeqVerseProcessor::SeqVerseProcessor()
@@ -293,10 +294,13 @@ juce::AudioProcessorEditor* SeqVerseProcessor::createEditor()
 void SeqVerseProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::XmlElement xml (stateTag);
+    xml.setAttribute ("version", stateVersion);
 
+    // The value itself is stored, the index of a choice or the number of an integer parameter. A fraction of the range
+    // would change its meaning whenever a list gets another entry.
     for (auto* parameter : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
-            xml.setAttribute (ranged->getParameterID(), (double) ranged->getValue());
+            xml.setAttribute (ranged->getParameterID(), (double) ranged->convertFrom0to1 (ranged->getValue()));
 
     copyXmlToBinary (xml, destData);
 }
@@ -307,10 +311,23 @@ void SeqVerseProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (xml == nullptr || ! xml->hasTagName (stateTag))
         return;
 
+    // Sessions saved before there was a version (1) stored every parameter as a fraction of its range
+    const int version = xml->getIntAttribute ("version", 1);
+
     for (auto* parameter : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
             if (xml->hasAttribute (ranged->getParameterID()))
-                ranged->setValueNotifyingHost ((float) xml->getDoubleAttribute (ranged->getParameterID()));
+            {
+                const double stored = xml->getDoubleAttribute (ranged->getParameterID());
+
+                float normalised = (float) stored;
+                if (version >= 2)
+                    normalised = ranged->convertTo0to1 ((float) stored);
+                else if (ranged == arpDirectionParam) // the list had 7 entries then, and more have been added since
+                    normalised = ranged->convertTo0to1 ((float) juce::roundToInt (stored * (music::kNumArpDirectionsInFirstVersion - 1)));
+
+                ranged->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, normalised));
+            }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
