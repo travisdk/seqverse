@@ -94,3 +94,20 @@ target_link_libraries(GenerativeMidiUiTest
         juce::juce_recommended_warning_flags)
 
 add_test(NAME ui_enabled_controls COMMAND GenerativeMidiUiTest)
+
+# Design prototype, not part of the plugin: renders the same controls in several knob styles as PNG snapshots.
+#   cmake --build build --target KnobStyles && ./build/KnobStyles_artefacts/Release/KnobStyles <output directory>
+juce_add_console_app(KnobStyles PRODUCT_NAME "KnobStyles")
+
+target_sources(KnobStyles PRIVATE tools/knob_styles.cpp)
+
+target_compile_definitions(KnobStyles PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+
+target_link_libraries(KnobStyles
+    PRIVATE
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
