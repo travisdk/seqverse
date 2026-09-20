@@ -3,12 +3,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
 
-// Turns incoming notes into a run of 1/8th notes in the major scale of the incoming note.
+// Generates MIDI notes while the host transport is playing. Incoming MIDI is ignored.
 //
-// Notes arriving with the same start time are one chord: the lowest of them is the root, the others are dropped.
-// While the root is held, the plugin plays 8ths that climb the major scale from the root (C4: C D E F G A B C D ...),
-// starting on the root itself. The first 8th starts with the incoming note and the run ends with its note-off,
-// so a 1/1 note gives 8 eighths. The last eighth is always played to its end.
+// Every 1/8th step of the host timeline (locked to the host's PPQ position, so it follows loops and jumps) has a
+// chance of playing one note from the selected key and scale. Arpeggio mode walks the scale's notes in the chosen
+// direction, Random mode picks one at random. Notes are played in the octave of C4, each for the selected length.
 class GenerativeMidiProcessor : public juce::AudioProcessor
 {
 public:
@@ -25,6 +24,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
+    // The MIDI input port stays declared (hosts such as Bitwig place the plugin in a note chain by it), but is ignored.
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -35,21 +35,18 @@ public:
     const juce::String getProgramName (int) override { return {}; }
     void changeProgramName (int, const juce::String&) override {}
 
-    void getStateInformation (juce::MemoryBlock&) override {}
-    void setStateInformation (const void*, int) override {}
+    void getStateInformation (juce::MemoryBlock&) override;
+    void setStateInformation (const void*, int) override;
 
-    // MIDI note of scale step `step` (0 is the root) in the major scale of `root`, steps past 6 continue in the next octave.
-    // Returns -1 when the note would be above 127.
-    static int majorScaleNote (int root, int step);
+    // Owned by the processor (addParameter). Read on the audio thread with get() / getIndex() only.
+    juce::AudioParameterChoice* keyParam = nullptr;
+    juce::AudioParameterChoice* scaleParam = nullptr;
+    juce::AudioParameterChoice* playModeParam = nullptr;
+    juce::AudioParameterChoice* arpDirectionParam = nullptr;
+    juce::AudioParameterInt* chanceParam = nullptr; // percent
+    juce::AudioParameterChoice* noteLengthParam = nullptr;
 
 private:
-    struct Event
-    {
-        juce::MidiMessage message;
-        int position;
-        bool isRootTrigger;
-    };
-
     struct PendingNoteOff
     {
         int channel;
@@ -57,19 +54,18 @@ private:
         double position; // samples from the start of the current block
     };
 
-    double currentBpm() const;
+    struct NewNote
+    {
+        int note;
+        int position; // samples from the start of the current block
+    };
 
     double sampleRate = 44100.0;
+    double internalPpq = 0.0; // only used when the host does not report its PPQ position
+    juce::Random random;
 
-    std::vector<Event> events;
     std::vector<PendingNoteOff> pendingNoteOffs;
-
-    bool sequenceRunning = false;
-    int rootChannel = 1;
-    int rootNote = 0;
-    juce::uint8 rootVelocity = 100;
-    int nextStep = 0;
-    double nextStepPosition = 0.0; // samples from the start of the current block
+    std::vector<NewNote> newNotes;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GenerativeMidiProcessor)
 };

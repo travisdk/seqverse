@@ -35,6 +35,7 @@ juce_add_plugin(GenerativeMidi
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE)
 
 target_sources(GenerativeMidi PRIVATE
+    src/Music.h
     src/PluginProcessor.cpp
     src/PluginProcessor.h
     src/PluginEditor.cpp
@@ -65,4 +66,4 @@ target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS
 target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
 target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
 
-add_test(NAME clap_host_eighths COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)
+add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:GenerativeMidi_CLAP>)

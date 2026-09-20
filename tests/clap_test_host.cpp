@@ -1,27 +1,43 @@
-// Minimal headless CLAP host for scripted tests: loads a .clap, runs a fixed MIDI scenario through
-// process() on the calling thread and checks what comes out. No GUI, no audio device, no Bitwig.
+// Minimal headless CLAP host for scripted tests: loads a .clap, runs scenarios through process() on the calling
+// thread and checks the MIDI that comes out. No GUI, no audio device, no Bitwig.
 //
 //   clap_test_host <path/to/Plugin.clap>      exit code 0 = all checks passed
 //
 // The plugin is loaded straight from the given path, never installed, so ~/.clap is left alone.
+//
+// Timing: the host runs at 120 BPM and 48 kHz, so a quarter note is 24000 samples and the plugin's 1/8th step is
+// 12000 samples. Each scenario creates a fresh plugin instance, sets parameters by name through the CLAP params
+// extension, drives the transport, and compares the note-ons/offs with expectations written out by hand.
 
 #include <clap/clap.h>
+
+#include "../src/Music.h"
 
 #include <dlfcn.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace
 {
 constexpr uint32_t sampleRate = 48000;
 constexpr uint32_t blockSize = 512;
-constexpr uint32_t numBlocks = 192; // 98304 samples, past the note-off at 96010
+constexpr uint32_t samplesPerQuarter = sampleRate * 60 / 120;
+constexpr uint32_t step = samplesPerQuarter / 2; // the plugin's step grid: 1/8th
+constexpr uint32_t oneBar = 188;                 // blocks: 96256 samples, eight steps and a bit
+constexpr uint32_t neverStop = UINT32_MAX;
 
 int failures = 0;
+bool everyBlockOk = true;
+bool everyBlockSilent = true;
 
 void check (bool ok, const char* what)
 {
@@ -38,35 +54,29 @@ const clap_host_t host = {
     [] (const clap_host_t*) {},                                              // request_callback
 };
 
-clap_event_midi makeMidi (uint32_t time, uint8_t b0, uint8_t b1, uint8_t b2)
-{
-    clap_event_midi e {};
-    e.header.size = sizeof (e);
-    e.header.time = time;
-    e.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
-    e.header.type = CLAP_EVENT_MIDI;
-    e.port_index = 0;
-    e.data[0] = b0;
-    e.data[1] = b1;
-    e.data[2] = b2;
-    return e;
-}
+const clap_plugin_factory_t* factory = nullptr;
+const clap_plugin_descriptor_t* descriptor = nullptr;
 
-// Events for the current block; the plugin pulls them through the input_events callbacks.
-struct Scenario
+struct InEvent
 {
-    std::vector<clap_event_midi> events;
-    std::vector<clap_event_midi> received; // everything the plugin emitted, block time made absolute
-    uint32_t blockStart = 0;
+    union
+    {
+        clap_event_header_t header;
+        clap_event_midi_t midi;
+        clap_event_param_value_t param;
+    };
 };
 
-Scenario scenario;
+// What the plugin pulls through the event callbacks during the current process() call.
+std::vector<InEvent> blockEvents;
+std::vector<clap_event_midi_t> received; // everything the plugin emitted, with the time made absolute
+uint32_t blockStartSample = 0;
 
-uint32_t inSize (const clap_input_events_t*) { return (uint32_t) scenario.events.size(); }
+uint32_t inSize (const clap_input_events_t*) { return (uint32_t) blockEvents.size(); }
 
 const clap_event_header_t* inGet (const clap_input_events_t*, uint32_t i)
 {
-    return i < scenario.events.size() ? &scenario.events[i].header : nullptr;
+    return i < blockEvents.size() ? &blockEvents[i].header : nullptr;
 }
 
 bool outTryPush (const clap_output_events_t*, const clap_event_header_t* h)
@@ -74,9 +84,281 @@ bool outTryPush (const clap_output_events_t*, const clap_event_header_t* h)
     if (h->type == CLAP_EVENT_MIDI)
     {
         auto e = *reinterpret_cast<const clap_event_midi_t*> (h);
-        e.header.time += scenario.blockStart;
-        scenario.received.push_back (e);
+        e.header.time += blockStartSample;
+        received.push_back (e);
     }
+    return true;
+}
+
+clap_event_midi_t makeMidi (uint32_t time, uint8_t b0, uint8_t b1, uint8_t b2)
+{
+    clap_event_midi_t e {};
+    e.header.size = sizeof (e);
+    e.header.time = time;
+    e.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+    e.header.type = CLAP_EVENT_MIDI;
+    e.data[0] = b0;
+    e.data[1] = b1;
+    e.data[2] = b2;
+    return e;
+}
+
+struct Instance
+{
+    const clap_plugin_t* plugin = nullptr;
+    const clap_plugin_params_t* params = nullptr;
+    std::map<std::string, clap_param_info_t> infos; // by parameter name
+};
+
+Instance createInstance()
+{
+    Instance i;
+    i.plugin = factory->create_plugin (factory, &host, descriptor->id);
+    if (i.plugin == nullptr || ! i.plugin->init (i.plugin))
+    {
+        std::fprintf (stderr, "could not create the plugin\n");
+        std::exit (2);
+    }
+
+    i.params = static_cast<const clap_plugin_params_t*> (i.plugin->get_extension (i.plugin, CLAP_EXT_PARAMS));
+    if (i.params != nullptr)
+        for (uint32_t n = 0; n < i.params->count (i.plugin); ++n)
+        {
+            clap_param_info_t info {};
+            if (i.params->get_info (i.plugin, n, &info))
+                i.infos[info.name] = info;
+        }
+
+    if (! i.plugin->activate (i.plugin, sampleRate, 1, blockSize) || ! i.plugin->start_processing (i.plugin))
+    {
+        std::fprintf (stderr, "could not activate the plugin\n");
+        std::exit (2);
+    }
+    return i;
+}
+
+void destroyInstance (Instance& i)
+{
+    i.plugin->stop_processing (i.plugin);
+    i.plugin->deactivate (i.plugin);
+    i.plugin->destroy (i.plugin);
+    i.plugin = nullptr;
+}
+
+// A parameter change by name and text ("Key", "D"), as an event for the next process() call.
+bool paramEvent (Instance& i, const char* name, const char* text, InEvent& out)
+{
+    const auto it = i.infos.find (name);
+    double value = 0.0;
+    if (it == i.infos.end() || i.params == nullptr || ! i.params->text_to_value (i.plugin, it->second.id, text, &value))
+    {
+        std::printf ("  FAIL: no parameter '%s' that accepts '%s'\n", name, text);
+        ++failures;
+        return false;
+    }
+
+    out = {};
+    out.param.header.size = sizeof (clap_event_param_value_t);
+    out.param.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+    out.param.header.type = CLAP_EVENT_PARAM_VALUE;
+    out.param.param_id = it->second.id;
+    out.param.cookie = it->second.cookie;
+    out.param.note_id = -1;
+    out.param.port_index = -1;
+    out.param.channel = -1;
+    out.param.key = -1;
+    out.param.value = value;
+    return true;
+}
+
+void processBlock (Instance& i, uint32_t startSample, const clap_event_transport_t* transport)
+{
+    static std::vector<float> left (blockSize), right (blockSize);
+    float* channels[2] = { left.data(), right.data() };
+    std::fill (left.begin(), left.end(), 1.0f); // poison, so an unwritten buffer is caught
+    std::fill (right.begin(), right.end(), 1.0f);
+
+    clap_audio_buffer_t out {};
+    out.channel_count = 2;
+    out.data32 = channels;
+
+    const clap_input_events_t in { nullptr, inSize, inGet };
+    const clap_output_events_t outEvents { nullptr, outTryPush };
+
+    clap_process_t p {};
+    p.steady_time = startSample;
+    p.frames_count = blockSize;
+    p.transport = transport;
+    p.audio_outputs = &out;
+    p.audio_outputs_count = 1;
+    p.in_events = &in;
+    p.out_events = &outEvents;
+
+    blockStartSample = startSample;
+    everyBlockOk &= i.plugin->process (i.plugin, &p) != CLAP_PROCESS_ERROR;
+    for (uint32_t n = 0; n < blockSize; ++n)
+        everyBlockSilent &= left[n] == 0.0f && right[n] == 0.0f;
+}
+
+std::vector<uint8_t> saveState (Instance& i)
+{
+    std::vector<uint8_t> blob;
+    const auto* state = static_cast<const clap_plugin_state_t*> (i.plugin->get_extension (i.plugin, CLAP_EXT_STATE));
+    const clap_ostream_t stream { &blob,
+                                  [] (const clap_ostream_t* s, const void* data, uint64_t size) -> int64_t
+                                  {
+                                      auto* b = static_cast<std::vector<uint8_t>*> (s->ctx);
+                                      b->insert (b->end(), static_cast<const uint8_t*> (data), static_cast<const uint8_t*> (data) + size);
+                                      return (int64_t) size;
+                                  } };
+    if (state == nullptr || ! state->save (i.plugin, &stream))
+        blob.clear();
+    return blob;
+}
+
+bool loadState (Instance& i, const std::vector<uint8_t>& blob)
+{
+    struct Reader { const std::vector<uint8_t>* data; size_t pos; } reader { &blob, 0 };
+    const auto* state = static_cast<const clap_plugin_state_t*> (i.plugin->get_extension (i.plugin, CLAP_EXT_STATE));
+    const clap_istream_t stream { &reader,
+                                  [] (const clap_istream_t* s, void* data, uint64_t size) -> int64_t
+                                  {
+                                      auto* r = static_cast<Reader*> (s->ctx);
+                                      const size_t n = std::min<size_t> ((size_t) size, r->data->size() - r->pos);
+                                      std::memcpy (data, r->data->data() + r->pos, n);
+                                      r->pos += n;
+                                      return (int64_t) n;
+                                  } };
+    return state != nullptr && state->load (i.plugin, &stream);
+}
+
+struct Scenario
+{
+    std::vector<std::pair<const char*, const char*>> params; // by name and text, set before the first block
+    std::vector<clap_event_midi_t> midiIn;                    // MIDI input, with absolute times
+    double startQuarters = 0.0;                               // transport position at sample 0
+    uint32_t numBlocks = oneBar;
+    uint32_t stopBlock = neverStop; // the transport stops from this block on
+    bool playing = true;
+    bool sendTransport = true;
+    bool roundTripState = false; // set the parameters on one instance, save, and load into a fresh one
+};
+
+// Runs a scenario on a fresh plugin instance and returns what the plugin emitted.
+std::vector<clap_event_midi_t> run (const Scenario& s)
+{
+    Instance inst = createInstance();
+
+    std::vector<InEvent> paramEvents;
+    for (const auto& [name, text] : s.params)
+    {
+        InEvent e {};
+        if (paramEvent (inst, name, text, e))
+            paramEvents.push_back (e);
+    }
+
+    if (s.roundTripState)
+    {
+        blockEvents = paramEvents; // one stopped block so the parameters take effect, then save into a fresh instance
+        processBlock (inst, 0, nullptr);
+        const auto blob = saveState (inst);
+        destroyInstance (inst);
+        inst = createInstance();
+        check (! blob.empty() && loadState (inst, blob), "state saved and loaded into a fresh instance");
+        paramEvents.clear();
+    }
+
+    received.clear();
+
+    for (uint32_t block = 0; block < s.numBlocks; ++block)
+    {
+        const uint32_t start = block * blockSize;
+
+        blockEvents.clear();
+        if (block == 0)
+            blockEvents = paramEvents;
+
+        for (auto e : s.midiIn)
+            if (e.header.time >= start && e.header.time < start + blockSize)
+            {
+                e.header.time -= start; // block-relative for the plugin
+                InEvent in {};
+                in.midi = e;
+                blockEvents.push_back (in);
+            }
+
+        clap_event_transport_t transport {};
+        transport.header.size = sizeof (transport);
+        transport.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        transport.header.type = CLAP_EVENT_TRANSPORT;
+        transport.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+        if (s.playing && block < s.stopBlock)
+            transport.flags |= CLAP_TRANSPORT_IS_PLAYING;
+        transport.tempo = 120.0;
+        transport.tsig_num = 4;
+        transport.tsig_denom = 4;
+        transport.song_pos_beats = (clap_beattime) std::llround ((s.startQuarters + (double) start / samplesPerQuarter) * CLAP_BEATTIME_FACTOR);
+
+        processBlock (inst, start, s.sendTransport ? &transport : nullptr);
+    }
+
+    destroyInstance (inst);
+    return received;
+}
+
+struct Note
+{
+    int note;
+    uint32_t time;
+};
+
+// Note-ons (status 0x90) or note-offs (0x80) among the events, in the order they came out.
+std::vector<Note> notesOf (const std::vector<clap_event_midi_t>& events, uint8_t status)
+{
+    std::vector<Note> result;
+    for (const auto& e : events)
+        if ((e.data[0] & 0xF0) == status)
+            result.push_back ({ e.data[1], e.header.time });
+    return result;
+}
+
+// Notes on a regular grid: the i-th note starts at firstTime + i * spacing.
+std::vector<Note> grid (std::vector<int> notes, uint32_t firstTime, uint32_t spacing = step)
+{
+    std::vector<Note> result;
+    for (size_t i = 0; i < notes.size(); ++i)
+        result.push_back ({ notes[i], firstTime + (uint32_t) i * spacing });
+    return result;
+}
+
+// Same notes at the same sample times, give or take one sample. `prefixOnly` compares just the first want.size().
+bool sameNotes (const std::vector<Note>& got, const std::vector<Note>& want, bool prefixOnly = false)
+{
+    bool ok = prefixOnly ? got.size() >= want.size() : got.size() == want.size();
+    for (size_t i = 0; ok && i < want.size(); ++i)
+        ok = got[i].note == want[i].note && got[i].time + 1 >= want[i].time && got[i].time <= want[i].time + 1;
+
+    if (! ok)
+    {
+        std::printf ("    got %zu notes, wanted %zu%s. first ones, got vs wanted:\n", got.size(), want.size(), prefixOnly ? "+" : "");
+        for (size_t i = 0; i < std::max (got.size(), want.size()) && i < 10; ++i)
+        {
+            const std::string g = i < got.size() ? std::to_string (got[i].note) + "@" + std::to_string (got[i].time) : "-";
+            const std::string w = i < want.size() ? std::to_string (want[i].note) + "@" + std::to_string (want[i].time) : "-";
+            std::printf ("      %-12s %-12s\n", g.c_str(), w.c_str());
+        }
+    }
+    return ok;
+}
+
+// A note that ends on the sample where the same note starts again has to end first.
+bool offsBeforeOnsAtSameSample (const std::vector<clap_event_midi_t>& events)
+{
+    for (size_t i = 0; i < events.size(); ++i)
+        for (size_t j = i + 1; j < events.size(); ++j)
+            if ((events[i].data[0] & 0xF0) == 0x90 && (events[j].data[0] & 0xF0) == 0x80
+                && events[i].header.time == events[j].header.time && events[i].data[1] == events[j].data[1])
+                return false;
     return true;
 }
 } // namespace
@@ -103,122 +385,189 @@ int main (int argc, char** argv)
         return 2;
     }
 
-    auto* factory = static_cast<const clap_plugin_factory_t*> (entry->get_factory (CLAP_PLUGIN_FACTORY_ID));
+    factory = static_cast<const clap_plugin_factory_t*> (entry->get_factory (CLAP_PLUGIN_FACTORY_ID));
     if (factory == nullptr || factory->get_plugin_count (factory) < 1)
     {
         std::fprintf (stderr, "no plugin in factory\n");
         return 2;
     }
 
-    const clap_plugin_descriptor_t* desc = factory->get_plugin_descriptor (factory, 0);
-    std::printf ("plugin: %s (%s)\n", desc->name, desc->id);
+    descriptor = factory->get_plugin_descriptor (factory, 0);
+    std::printf ("plugin: %s (%s)\n", descriptor->name, descriptor->id);
 
-    const clap_plugin_t* plugin = factory->create_plugin (factory, &host, desc->id);
-    check (plugin != nullptr && plugin->init (plugin), "create + init");
-    if (plugin == nullptr)
-        return 1;
-
-    auto* audioPorts = static_cast<const clap_plugin_audio_ports_t*> (plugin->get_extension (plugin, CLAP_EXT_AUDIO_PORTS));
-    check (audioPorts != nullptr && audioPorts->count (plugin, true) == 0 && audioPorts->count (plugin, false) == 1,
-           "audio ports: no input, one output");
-
-    check (plugin->activate (plugin, sampleRate, 1, blockSize), "activate");
-    check (plugin->start_processing (plugin), "start_processing");
-
-    // The host sends no transport, so the plugin runs at its 120 BPM fallback: an 8th is sampleRate / 4 samples.
-    // Scenario (absolute sample times): C4 held for eight 8ths, and a CC in between that must pass through.
-    constexpr uint32_t eighth = sampleRate / 4;
-    const uint32_t noteOnTime = 10;
-    const std::vector<clap_event_midi> script = {
-        makeMidi (noteOnTime, 0x90, 60, 100),
-        makeMidi (blockSize + 5, 0xB0, 1, 64),
-        makeMidi (noteOnTime + 8 * eighth, 0x80, 60, 0),
-    };
-
-    std::vector<float> left (blockSize), right (blockSize);
-    float* channels[2] = { left.data(), right.data() };
-    bool silent = true;
-    bool processedOk = true;
-
-    for (uint32_t block = 0; block < numBlocks; ++block)
     {
-        scenario.blockStart = block * blockSize;
-        scenario.events.clear();
-        for (auto e : script)
-            if (e.header.time >= scenario.blockStart && e.header.time < scenario.blockStart + blockSize)
+        std::printf ("setup\n");
+        Instance i = createInstance();
+        auto* audioPorts = static_cast<const clap_plugin_audio_ports_t*> (i.plugin->get_extension (i.plugin, CLAP_EXT_AUDIO_PORTS));
+        check (audioPorts != nullptr && audioPorts->count (i.plugin, true) == 0 && audioPorts->count (i.plugin, false) == 1,
+               "audio ports: no input, one output");
+        for (const char* name : { "Key", "Scale", "Play Mode", "Arp Direction", "Chance", "Note Length" })
+            check (i.infos.count (name) == 1, name);
+        destroyInstance (i);
+    }
+
+    // Defaults: C major, arpeggio up, chance 100 %, 1/16th notes. The 1/8th steps start at 0, 12000, 24000 ...
+    std::printf ("default settings, transport playing from the start\n");
+    {
+        Scenario s;
+        s.midiIn = { makeMidi (100, 0x90, 61, 100), makeMidi (5000, 0x80, 61, 0) }; // must be ignored
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)),
+               "note-ons: C D E F G A B C D on the 1/8th grid, and no trace of the MIDI input");
+        check (sameNotes (notesOf (out, 0x80), grid ({ 60, 62, 64, 65, 67, 69, 71, 60 }, step / 2)),
+               "note-offs: each 1/16th after its note-on");
+    }
+
+    std::printf ("transport stopped, or no transport information\n");
+    {
+        Scenario s;
+        s.playing = false;
+        check (run (s).empty(), "nothing is generated while the transport is stopped");
+
+        s = Scenario();
+        s.sendTransport = false;
+        check (run (s).empty(), "nothing is generated when the host sends no transport");
+    }
+
+    std::printf ("transport stops while a note sounds\n");
+    {
+        Scenario s;
+        s.params = { { "Note Length", "1/1" } };
+        s.numBlocks = 40;
+        s.stopBlock = 6;
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), grid ({ 60 }, 0)), "one note-on");
+        check (sameNotes (notesOf (out, 0x80), grid ({ 60 }, 6 * blockSize)), "its note-off comes when the transport stops");
+    }
+
+    std::printf ("transport starts between two steps: the pattern follows the timeline\n");
+    {
+        Scenario s;
+        s.startQuarters = 1.25; // step 2 is at quarter 1.0, step 3 at 1.5, which is 6000 samples from the start
+        s.numBlocks = 100;
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), grid ({ 65, 67, 69, 71 }, 6000)), "starts on step 3 of the arp (F G A B)");
+    }
+
+    std::printf ("D natural minor, arp down, 1/8th notes\n");
+    {
+        Scenario s;
+        s.params = { { "Key", "D" }, { "Scale", "Natural Minor (Aeolian)" }, { "Arp Direction", "Down" }, { "Note Length", "1/8" } };
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), grid ({ 72, 70, 69, 67, 65, 64, 62, 72, 70 }, 0)), "note-ons: C Bb A G F E D C Bb");
+        check (sameNotes (notesOf (out, 0x80), grid ({ 72, 70, 69, 67, 65, 64, 62, 72 }, step)), "each note ends where the next starts");
+        check (offsBeforeOnsAtSameSample (out), "a note-off comes before a note-on on the same sample");
+    }
+
+    // 1/1 notes last 96000 samples, so C (step 0) is still sounding when the arp comes round to C again at step 7.
+    std::printf ("a note is played again while it still sounds\n");
+    {
+        Scenario s;
+        s.params = { { "Note Length", "1/1" } };
+        const auto out = run (s);
+        check (sameNotes (notesOf (out, 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)), "every step still plays its note");
+        check (sameNotes (notesOf (out, 0x80), { { 60, 7 * step }, { 62, 8 * step } }),
+               "the sounding C ends where the new C starts, D likewise, and nothing else ends yet");
+        check (offsBeforeOnsAtSameSample (out), "a note-off comes before the note-on of the same note on the same sample");
+    }
+
+    std::printf ("arp directions over C major (7 notes)\n");
+    {
+        constexpr int cMajor[7] = { 0, 2, 4, 5, 7, 9, 11 };
+        struct Pattern { int direction; std::vector<int> indices; };
+        const Pattern patterns[] = {
+            { music::up,        { 0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6 } },
+            { music::down,      { 6, 5, 4, 3, 2, 1, 0, 6, 5, 4, 3, 2, 1, 0 } },
+            { music::upDown,    { 0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0, 1 } },
+            { music::downUp,    { 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 5 } },
+            { music::upAndDown, { 0, 1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1, 0 } },
+            { music::converge,  { 0, 6, 1, 5, 2, 4, 3, 0, 6, 1, 5, 2, 4, 3 } },
+            { music::diverge,   { 3, 4, 2, 5, 1, 6, 0, 3, 4, 2, 5, 1, 6, 0 } },
+        };
+
+        for (const auto& pattern : patterns)
+        {
+            Scenario s;
+            s.params = { { "Arp Direction", music::arpDirectionNames[pattern.direction] }, { "Note Length", "1/32" } };
+            s.numBlocks = 330; // 14 steps and a bit
+
+            std::vector<int> notes;
+            for (int index : pattern.indices)
+                notes.push_back (60 + cMajor[index]);
+
+            check (sameNotes (notesOf (run (s), 0x90), grid (notes, 0), true), music::arpDirectionNames[pattern.direction]);
+        }
+    }
+
+    std::printf ("random mode stays in the scale\n");
+    {
+        Scenario s;
+        s.params = { { "Play Mode", "Random" }, { "Scale", "Major Pentatonic" }, { "Note Length", "1/32" } };
+        s.numBlocks = 750; // four bars, 32 steps
+        const auto ons = notesOf (run (s), 0x90);
+
+        bool inScale = true;
+        std::vector<int> distinct;
+        for (const auto& n : ons)
+        {
+            inScale &= n.note == 60 || n.note == 62 || n.note == 64 || n.note == 67 || n.note == 69;
+            if (std::find (distinct.begin(), distinct.end(), n.note) == distinct.end())
+                distinct.push_back (n.note);
+        }
+        check (ons.size() == 32, "32 steps, 32 notes");
+        check (inScale, "every note is in C major pentatonic");
+        check (distinct.size() >= 3, "and they are not all the same note");
+    }
+
+    std::printf ("every scale, in a different key each, in random mode\n");
+    {
+        int wrong = 0;
+        for (int i = 0; i < music::kNumScales; ++i)
+        {
+            const int key = i % music::kNumKeys;
+            Scenario s;
+            s.params = { { "Key", music::keyNames[key] }, { "Scale", music::scales[i].name }, { "Play Mode", "Random" }, { "Note Length", "1/32" } };
+            const auto ons = notesOf (run (s), 0x90);
+
+            bool ok = ons.size() == 9;
+            for (const auto& n : ons)
             {
-                e.header.time -= scenario.blockStart; // block-relative for the plugin
-                scenario.events.push_back (e);
+                bool inScale = false;
+                for (int k = 0; k < music::scales[i].size; ++k)
+                    inScale |= n.note == music::kRootNote + key + music::scales[i].intervals[k];
+                ok &= inScale;
             }
 
-        std::fill (left.begin(), left.end(), 1.0f); // poison, so an unwritten buffer is caught
-        std::fill (right.begin(), right.end(), 1.0f);
-
-        clap_audio_buffer_t out {};
-        out.channel_count = 2;
-        out.data32 = channels;
-
-        const clap_input_events_t in { nullptr, inSize, inGet };
-        const clap_output_events_t outEvents { nullptr, outTryPush };
-
-        clap_process_t p {};
-        p.steady_time = scenario.blockStart;
-        p.frames_count = blockSize;
-        p.audio_outputs = &out;
-        p.audio_outputs_count = 1;
-        p.in_events = &in;
-        p.out_events = &outEvents;
-
-        processedOk &= plugin->process (plugin, &p) != CLAP_PROCESS_ERROR;
-        for (uint32_t i = 0; i < blockSize; ++i)
-            silent &= left[i] == 0.0f && right[i] == 0.0f;
+            if (! ok)
+            {
+                std::printf ("    %s in %s: %zu notes, not all in the scale\n", music::scales[i].name, music::keyNames[key], ons.size());
+                ++wrong;
+            }
+        }
+        check (wrong == 0, "all notes are in the scale, and a bar has 9 of them");
     }
 
-    check (processedOk, "process() returned no error");
-    check (silent, "audio output is silent");
-
-    // Sort what came out. The trigger note itself must be gone, so anything that is a note is generated.
-    std::vector<clap_event_midi> ons, offs, others;
-    for (const auto& e : scenario.received)
+    std::printf ("chance 0 %% and MIDI input\n");
     {
-        const uint8_t status = e.data[0] & 0xF0;
-        (status == 0x90 ? ons : status == 0x80 ? offs : others).push_back (e);
+        Scenario s;
+        s.params = { { "Chance", "0" } };
+        s.midiIn = { makeMidi (100, 0x90, 60, 100), makeMidi (5000, 0x80, 60, 0) };
+        check (run (s).empty(), "no notes at all, and the MIDI input is not passed on");
     }
 
-    // C4 held for eight 8ths: C D E F G A B C5, each on the 8th grid, sounding for 90% of an 8th.
-    const uint8_t expectedNotes[8] = { 60, 62, 64, 65, 67, 69, 71, 72 };
-    const uint32_t gate = eighth * 9 / 10;
-    auto near = [] (uint32_t a, uint32_t b) { return a + 1 >= b && a <= b + 1; };
-
-    bool onsOk = ons.size() == 8;
-    bool offsOk = offs.size() == 8;
-    for (uint32_t k = 0; k < 8 && onsOk && offsOk; ++k)
+    std::printf ("saved state\n");
     {
-        const uint32_t start = noteOnTime + k * eighth;
-        const bool onOk = ons[k].data[0] == 0x90 && ons[k].data[1] == expectedNotes[k] && ons[k].data[2] == 100
-                          && near (ons[k].header.time, start);
-        const bool offOk = offs[k].data[0] == 0x80 && offs[k].data[1] == expectedNotes[k]
-                           && near (offs[k].header.time, start + gate);
-        if (! onOk || ! offOk)
-            std::printf ("    step %u: note-on %u@%u, note-off %u@%u, expected note %u at %u / %u\n", k, ons[k].data[1],
-                         ons[k].header.time, offs[k].data[1], offs[k].header.time, expectedNotes[k], start, start + gate);
-        onsOk &= onOk;
-        offsOk &= offOk;
+        Scenario s;
+        s.params = { { "Key", "E" }, { "Scale", "Dorian" } };
+        s.roundTripState = true;
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 66, 67, 69, 71, 73, 74, 64, 66 }, 0)),
+               "key and scale come back after loading: E dorian");
     }
-    if (! onsOk || ! offsOk)
-        std::printf ("    got %zu note-ons, %zu note-offs (expected 8 each)\n", ons.size(), offs.size());
 
-    check (onsOk, "eight note-ons: C D E F G A B C5 on the 8th grid");
-    check (offsOk, "eight note-offs, each 90% of an 8th after its note-on");
+    std::printf ("all blocks\n");
+    check (everyBlockOk, "process() never returned an error");
+    check (everyBlockSilent, "the audio output was always silent");
 
-    // Everything that is not a note passes through unchanged.
-    check (others.size() == 1 && near (others[0].header.time, blockSize + 5)
-               && std::memcmp (others[0].data, script[1].data, 3) == 0,
-           "CC passed through unchanged");
-
-    plugin->stop_processing (plugin);
-    plugin->deactivate (plugin);
-    plugin->destroy (plugin);
     entry->deinit();
     dlclose (lib);
 
