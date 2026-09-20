@@ -54,7 +54,7 @@ int main (int argc, char** argv)
             saveSnapshot (*editor, snapshotPrefix + "_" + name + ".png");
     };
 
-    const char* const alwaysEnabled[] = { "key", "scale", "playMode", "stepRate", "noteLength", "chance", "swing",
+    const char* const alwaysEnabled[] = { "key", "scale", "playMode", "octaveNote", "stepRate", "noteLength", "chance", "swing",
                                           "lowOctave", "highOctave", "velocity", "velocityVariation", "channel", "cycleLength" };
     const auto othersEnabled = [&]
     {

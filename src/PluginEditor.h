@@ -42,7 +42,7 @@ private:
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
 
     juce::Label titleLabel;
-    Selector key, scale, stepRate, playMode, arpDirection;
+    Selector key, scale, stepRate, playMode, arpDirection, octaveNote;
     Knob chance, noteLength, swing, velocity, velocityVariation;
     Knob lowOctave, highOctave, channel, cycleLength, seed;
 

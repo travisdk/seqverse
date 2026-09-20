@@ -33,6 +33,7 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
+    setUpSelector (octaveNote, "Octave note", *processor.octaveNoteParam);
 
     setUpKnob (chance, "Chance", *processor.chanceParam);
     chance.slider.setTextValueSuffix (" %");
@@ -133,7 +134,7 @@ void SeqVerseEditor::resized()
     titleLabel.setBounds (area.removeFromTop (40));
     area.removeFromTop (8);
 
-    // Selectors in a grid of three columns, two rows. The second row has two, so its third column is empty.
+    // Selectors in a grid of three columns, two rows
     const auto placeSelectors = [] (juce::Rectangle<int> row, std::initializer_list<Selector*> selectors)
     {
         const int width = row.getWidth() / 3;
@@ -147,7 +148,7 @@ void SeqVerseEditor::resized()
 
     placeSelectors (area.removeFromTop (46), { &key, &scale, &stepRate });
     area.removeFromTop (10);
-    placeSelectors (area.removeFromTop (46), { &playMode, &arpDirection });
+    placeSelectors (area.removeFromTop (46), { &playMode, &arpDirection, &octaveNote });
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 

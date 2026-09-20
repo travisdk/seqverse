@@ -50,6 +50,7 @@ public:
     juce::AudioParameterChoice* scaleParam = nullptr;
     juce::AudioParameterChoice* playModeParam = nullptr;
     juce::AudioParameterChoice* arpDirectionParam = nullptr;
+    juce::AudioParameterChoice* octaveNoteParam = nullptr;
     juce::AudioParameterChoice* stepRateParam = nullptr;
     juce::AudioParameterChoice* noteLengthParam = nullptr;
     juce::AudioParameterInt* chanceParam = nullptr;            // percent

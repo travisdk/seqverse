@@ -9,7 +9,8 @@ namespace music
 constexpr int kNumKeys = 12;
 constexpr const char* keyNames[kNumKeys] = { "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B" };
 
-// Octaves are numbered so that C4 is MIDI note 60. The top of the range keeps every scale note below 127.
+// Octaves are numbered so that C4 is MIDI note 60. The top of the range keeps every note below 127, also the root of
+// the octave above it (octave 8 at most, note 119 in B).
 constexpr int kMinOctave = 0;
 constexpr int kMaxOctave = 7;
 constexpr int kDefaultOctave = 4;
@@ -72,6 +73,11 @@ constexpr int kNumScales = (int) (sizeof (scales) / sizeof (scales[0]));
 
 enum PlayMode { arpeggio, randomNotes, numPlayModes };
 constexpr const char* playModeNames[numPlayModes] = { "Arpeggio", "Random" };
+
+// The pool of notes is the scale over the octave range, and, when the octave note is included, the root of the octave
+// above the range as its top note: C D E F G A B C over one octave of C major.
+enum OctaveNote { includeOctaveNote, excludeOctaveNote, numOctaveNoteChoices };
+constexpr const char* octaveNoteNames[numOctaveNoteChoices] = { "Include", "Exclude" };
 
 // What a saved session stores is the index of the choice, so the order here can only grow at the end
 enum ArpDirection { up, down, upDown, downUp, upAndDown, converge, diverge,

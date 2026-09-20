@@ -60,6 +60,7 @@ SeqVerseProcessor::SeqVerseProcessor()
     addParameter (scaleParam = new Choice ({ "scale", 1 }, "Scale", scaleNames(), 0));
     addParameter (playModeParam = new Choice ({ "playMode", 1 }, "Play Mode", namesOf (music::playModeNames), music::arpeggio));
     addParameter (arpDirectionParam = new Choice ({ "arpDirection", 1 }, "Arp Direction", namesOf (music::arpDirectionNames), music::up));
+    addParameter (octaveNoteParam = new Choice ({ "octaveNote", 1 }, "Octave Note", namesOf (music::octaveNoteNames), music::includeOctaveNote));
     addParameter (stepRateParam = new Choice ({ "stepRate", 1 }, "Step Rate", namesOf (music::stepRateNames), music::kDefaultStepRate));
     addParameter (noteLengthParam = new Choice ({ "noteLength", 1 }, "Note Length", namesOf (music::noteLengthNames), 1));
     addParameter (chanceParam = new Int ({ "chance", 1 }, "Chance", 0, 100, 100, percent));
@@ -189,7 +190,8 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // Whatever the two octave parameters say, the range is low..high
     const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
     const int highOctave = juce::jmax (lowOctaveParam->get(), highOctaveParam->get());
-    const int poolSize = (highOctave - lowOctave + 1) * scale.size;
+    const int scaleNotes = (highOctave - lowOctave + 1) * scale.size;
+    const int poolSize = scaleNotes + (octaveNoteParam->getIndex() == music::includeOctaveNote ? 1 : 0); // the last is the octave note
 
     const auto firstStepAtOrAfter = [stepQuarters] (double quarters)
     { return (juce::int64) std::ceil (quarters / stepQuarters - kBoundaryTolerance); };
@@ -212,7 +214,8 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             return;
 
         const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, step) : noteDraw;
-        const int note = music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size]);
+        const int note = poolIndex < scaleNotes ? music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size])
+                                                : music::noteNumber (key, highOctave + 1, 0); // the root above the range
 
         const double onPosition = juce::jlimit (0.0, (double) (numSamples - 1), (stepStart - startQuarters) * samplesPerQuarter);
 

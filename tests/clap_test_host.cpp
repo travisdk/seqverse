@@ -245,6 +245,10 @@ struct Scenario
     bool sendTransport = true;
     bool roundTripState = false; // set the parameters on one instance, save, and load into a fresh one
     std::vector<uint8_t> savedState; // a saved session to load into the instance before anything else
+
+    // The plugin includes the octave note by default. Most scenarios are about something else, and their expectations
+    // are written for one octave of seven notes, so they run without it unless they ask for it (or set it themselves).
+    bool octaveNote = false;
 };
 
 // Runs a scenario on a fresh plugin instance and returns what the plugin emitted.
@@ -271,6 +275,19 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
             e.param.value = value;
             paramEvents.push_back (e);
         }
+    }
+
+    bool setsOctaveNote = s.octaveNote;
+    for (const auto& p : s.params)
+        setsOctaveNote |= std::string (p.first) == "Octave Note";
+    for (const auto& p : s.rawParams)
+        setsOctaveNote |= std::string (p.first) == "Octave Note";
+
+    if (! setsOctaveNote)
+    {
+        InEvent e {};
+        if (paramEvent (inst, "Octave Note", "Exclude", e))
+            paramEvents.insert (paramEvents.begin(), e);
     }
 
     if (s.roundTripState)
@@ -479,6 +496,7 @@ int main (int argc, char** argv)
             { "Scale", music::kNumScales - 1, true },
             { "Play Mode", music::numPlayModes - 1, true },
             { "Arp Direction", music::numArpDirections - 1, true },
+            { "Octave Note", music::numOctaveNoteChoices - 1, true },
             { "Step Rate", music::kNumStepRates - 1, true },
             { "Note Length", music::kNumNoteLengths - 1, true },
             { "Chance", 100, false },
@@ -510,15 +528,71 @@ int main (int argc, char** argv)
     }
 
     // Defaults: C major, arpeggio up, chance 100 %, 1/16th notes. The 1/8th steps start at 0, 12000, 24000 ...
+    // Nothing changed from the defaults: C major, one octave with the octave note on top, so the arpeggio is eight notes
     std::printf ("default settings, transport playing from the start\n");
     {
         Scenario s;
+        s.octaveNote = true;
         s.midiIn = { makeMidi (100, 0x90, 61, 100), makeMidi (5000, 0x80, 61, 0) }; // must be ignored
         const auto out = run (s);
-        check (sameNotes (notesOf (out, 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)),
-               "note-ons: C D E F G A B C D on the 1/8th grid, and no trace of the MIDI input");
-        check (sameNotes (notesOf (out, 0x80), grid ({ 60, 62, 64, 65, 67, 69, 71, 60 }, step / 2)),
+        check (sameNotes (notesOf (out, 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 60 }, 0)),
+               "note-ons: C D E F G A B C5 C on the 1/8th grid, up to the octave and over again, and no trace of the MIDI input");
+        check (sameNotes (notesOf (out, 0x80), grid ({ 60, 62, 64, 65, 67, 69, 71, 72 }, step / 2)),
                "note-offs: each 1/16th after its note-on");
+    }
+
+    // The root an octave up ends the run: one octave of C major goes C4 to C5, and several octaves go up to the root
+    // above the range. Random mode picks from the same pool.
+    std::printf ("octave note\n");
+    {
+        Scenario s;
+        s.octaveNote = true;
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 60 }, 0)), "Up: C D E F G A B C5, then round again");
+
+        s.params = { { "Arp Direction", "Down" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 72, 71, 69, 67, 65, 64, 62, 60, 72 }, 0)), "Down starts on the octave note: C5 B A G F E D C");
+
+        s.params = { { "Arp Direction", "Up/Down" }, { "Note Length", "1/32" } };
+        s.numBlocks = 330;
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62, 60 }, 0), true),
+               "Up/Down turns at the octave note, and not at B");
+
+        s = Scenario();
+        s.octaveNote = true;
+        s.params = { { "Arp Direction", "Thumb Up" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 60, 64, 60, 65, 60, 67, 60 }, 0)), "Thumb Up still returns to the root between the notes");
+
+        // Octaves 3 to 4 is 14 notes, and the root above the range is octave 5
+        s.params = { { "Low Octave", "3" }, { "Arp Direction", "Down" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 72, 71, 69, 67, 65, 64, 62, 60, 59 }, 0)),
+               "over octaves 3 to 4 the top note is the root of octave 5: C5 B A G F E D C B");
+
+        s.params = { { "Key", "D" }, { "Scale", "Natural Minor (Aeolian)" }, { "Arp Direction", "Down" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 74, 72, 70, 69, 67, 65, 64, 62, 74 }, 0)), "in D minor the octave note is D5: D5 C Bb A G F E D");
+
+        s = Scenario();
+        s.octaveNote = true;
+        s.params = { { "Play Mode", "Random" }, { "Scale", "Major Pentatonic" }, { "Note Length", "1/32" }, { "Seed", "42" } };
+        s.numBlocks = 750;
+        bool inPool = true, sawOctaveNote = false;
+        for (const auto& n : notesOf (run (s), 0x90))
+        {
+            inPool &= n.note == 60 || n.note == 62 || n.note == 64 || n.note == 67 || n.note == 69 || n.note == 72;
+            sawOctaveNote |= n.note == 72;
+        }
+        check (inPool && sawOctaveNote, "Random mode picks from the same pool, the octave note included");
+
+        s = Scenario(); // Exclude, as before
+        s.params = { { "Octave Note", "Exclude" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)), "Exclude: C D E F G A B, then C again");
+
+        s.params = { { "Octave Note", "Include" } };
+        s.rawParams = {};
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 60 }, 0)), "Include, picked by text");
+
+        s = Scenario();
+        s.rawParams = { { "Octave Note", 0 } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 60 }, 0)), "and by value, as a host sends it: 0 is Include");
     }
 
     std::printf ("transport stopped, or no transport information\n");
