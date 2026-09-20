@@ -53,9 +53,12 @@ target_link_libraries(GenerativeMidi
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
+# CLAP_USE_JUCE_PARAMETER_RANGES ALL: without it every parameter is reported to the host as 0..1, but the choice
+# parameters are still flagged as stepped, so a host may only offer two values of a 43-entry Scale list.
 clap_juce_extensions_plugin(TARGET GenerativeMidi
     CLAP_ID "com.henrik.generative-midi"
-    CLAP_FEATURES note-effect utility)
+    CLAP_FEATURES note-effect utility
+    CLAP_USE_JUCE_PARAMETER_RANGES ALL)
 
 # Headless CLAP host for scripted tests. Loads the built .clap straight from the build tree, not from ~/.clap.
 #   cmake --build build --target GenerativeMidi_CLAP clap_test_host && ctest --test-dir build --output-on-failure

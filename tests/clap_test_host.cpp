@@ -236,6 +236,7 @@ bool loadState (Instance& i, const std::vector<uint8_t>& blob)
 struct Scenario
 {
     std::vector<std::pair<const char*, const char*>> params; // by name and text, set before the first block
+    std::vector<std::pair<const char*, double>> rawParams;   // by name and the raw value a host sends: 5 is the sixth choice
     std::vector<clap_event_midi_t> midiIn;                    // MIDI input, with absolute times
     double startQuarters = 0.0;                               // transport position at sample 0
     uint32_t numBlocks = oneBar;
@@ -256,6 +257,16 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
         InEvent e {};
         if (paramEvent (inst, name, text, e))
             paramEvents.push_back (e);
+    }
+
+    for (const auto& [name, value] : s.rawParams)
+    {
+        InEvent e {};
+        if (paramEvent (inst, name, "0", e)) // finds the parameter, the value is replaced
+        {
+            e.param.value = value;
+            paramEvents.push_back (e);
+        }
     }
 
     if (s.roundTripState)
@@ -421,8 +432,42 @@ int main (int argc, char** argv)
         auto* audioPorts = static_cast<const clap_plugin_audio_ports_t*> (i.plugin->get_extension (i.plugin, CLAP_EXT_AUDIO_PORTS));
         check (audioPorts != nullptr && audioPorts->count (i.plugin, true) == 0 && audioPorts->count (i.plugin, false) == 1,
                "audio ports: no input, one output");
-        for (const char* name : { "Key", "Scale", "Play Mode", "Arp Direction", "Chance", "Note Length" })
-            check (i.infos.count (name) == 1, name);
+        // A host only offers a stepped parameter the values between its min and max. If the range were 0..1 for
+        // the 44 scales, Bitwig could pick just two of them, so the reported span has to be one step per choice.
+        // Integer parameters are not flagged stepped by JUCE, so for them only the span is required.
+        struct Span { const char* name; double span; bool mustBeStepped; };
+        const Span spans[] = {
+            { "Key", music::kNumKeys - 1, true },
+            { "Scale", music::kNumScales - 1, true },
+            { "Play Mode", music::numPlayModes - 1, true },
+            { "Arp Direction", music::numArpDirections - 1, true },
+            { "Arp Reset", music::numArpResets - 1, true },
+            { "Step Rate", music::kNumStepRates - 1, true },
+            { "Note Length", music::kNumNoteLengths - 1, true },
+            { "Chance", 100, false },
+            { "Swing", 100, false },
+            { "Low Octave", music::kMaxOctave - music::kMinOctave, false },
+            { "High Octave", music::kMaxOctave - music::kMinOctave, false },
+            { "Velocity", 126, false },
+            { "Velocity Variation", 64, false },
+            { "Channel", 15, false },
+            { "Seed", 9999, false },
+        };
+        for (const auto& expected : spans)
+        {
+            const auto it = i.infos.find (expected.name);
+            check (it != i.infos.end(), expected.name);
+            if (it != i.infos.end())
+            {
+                const auto& info = it->second;
+                const bool ok = ((info.flags & CLAP_PARAM_IS_STEPPED) != 0 || ! expected.mustBeStepped)
+                                && info.max_value - info.min_value == expected.span;
+                if (! ok)
+                    std::printf ("    '%s': flags %u, range %g to %g, expected %sa range spanning %g\n", expected.name, info.flags,
+                                 info.min_value, info.max_value, expected.mustBeStepped ? "stepped, " : "", expected.span);
+                check (ok, (std::string (expected.name) + " reports one step per value to the host").c_str());
+            }
+        }
         destroyInstance (i);
     }
 
@@ -572,6 +617,21 @@ int main (int argc, char** argv)
         s.params = { { "Chance", "0" } };
         s.midiIn = { makeMidi (100, 0x90, 60, 100), makeMidi (5000, 0x80, 60, 0) };
         check (run (s).empty(), "no notes at all, and the MIDI input is not passed on");
+    }
+
+    // What a host does when the user picks an entry in its own parameter list, or when automation runs: it sends the
+    // choice's index, without going through any text.
+    std::printf ("choices picked by index, as a host sends them\n");
+    {
+        Scenario s;
+        s.rawParams = { { "Key", 2 }, { "Scale", 5 } }; // D, and the sixth scale: Phrygian
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 62, 63, 65, 67, 69, 70, 72, 62, 63 }, 0)), "Key 2 and Scale 5 play D Phrygian");
+
+        s.rawParams = { { "Scale", (double) music::kNumScales - 1 } }; // the last one, Egyptian: 0 2 5 7 10
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 65, 67, 70, 60, 62, 65, 67 }, 0)), "the last scale can be reached too");
+
+        s.rawParams = { { "Scale", 20 } }; // Double Harmonic (Byzantine): 0 1 4 5 7 8 11
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 61, 64, 65, 67, 68, 71, 60, 61 }, 0)), "and one from the middle of the list");
     }
 
     std::printf ("step rate\n");
