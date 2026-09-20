@@ -43,7 +43,8 @@ It currently asserts the passthrough behaviour (audio ports: no input, one silen
 - **Audio thread** (`processBlock`): no allocations, no locks, no UI calls, and no setting of parameters. Read parameters directly via `AudioParameterInt::get()` and `AudioParameterChoice::getIndex()`.
 - **Parameter constraints** (e.g. low <= high) are enforced in both places: in `processBlock` and by a message-thread listener.
 - **Testing:** use the scripted CLAP test host before claiming something works.
-- **Building:** use CMake and Ninja, and the build must produce no warnings. Ask before replacing the `.clap` in `~/.clap`, because Bitwig may have it loaded.
+- **Building:** use CMake and Ninja, and the build must produce no warnings.
+- **Final step of every task:** build the `.clap`, run the CTest host test, then copy `build/GenerativeMidi_artefacts/Release/CLAP/GenerativeMidi.clap` to `~/.clap/` so it can be tested manually in Bitwig. This is standing permission, no need to ask. Copy to a temp name in `~/.clap` and `mv` it over the target, because Bitwig may have the old file loaded. Check whether Bitwig is running (`pgrep -ia bitwig`) and mention it, since it needs a plugin rescan.
 
 ## Repo conventions
 
