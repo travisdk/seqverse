@@ -68,6 +68,7 @@ public:
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16
     juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is off
     juce::AudioParameterInt* seedParam = nullptr;              // 0 is a different sequence every time
+    juce::AudioParameterInt* lengthVariationParam = nullptr;   // percent: notes are shortened by up to this much
     juce::AudioParameterChoice* rhythmParam = nullptr;
     juce::AudioParameterInt* euclidStepsParam = nullptr;       // Euclidean rhythm: the pattern's length
     juce::AudioParameterInt* euclidPulsesParam = nullptr;      // ... its onsets (all steps play if there are more than steps)

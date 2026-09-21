@@ -508,6 +508,7 @@ int main (int argc, char** argv)
             { "Channel", 15, false },
             { "Cycle Length", music::kMaxCycleHalfBeats, false },
             { "Seed", 9999, false },
+            { "Length Variation", 100, false },
             { "Rhythm", music::numRhythms - 1, true },
             { "Pattern Length", music::kMaxEuclidSteps - music::kMinEuclidSteps, false },
             { "Pulses", music::kMaxEuclidPulses, false },
@@ -910,6 +911,65 @@ int main (int argc, char** argv)
     }
 
     // 4.5 beats are nine 1/8 steps, so C major (7 notes) going up starts over after every nine steps: C D E F G A B C D | C D E ...
+    std::printf ("note length variation\n");
+    {
+        // Each note's length: the distance from its note-on to the next note-off. 1/8 steps and 1/16th notes (6000
+        // samples) never overlap, so the n-th note-off belongs to the n-th note-on.
+        const auto lengths = [] (const std::vector<clap_event_midi_t>& events)
+        {
+            const auto ons = notesOf (events, 0x90);
+            const auto offs = notesOf (events, 0x80);
+            std::vector<uint32_t> result;
+            for (size_t i = 0; i < ons.size() && i < offs.size(); ++i)
+                result.push_back (offs[i].time - ons[i].time);
+            return result;
+        };
+
+        Scenario s;
+        s.numBlocks = 750; // 32 steps
+        auto out = run (s);
+        auto len = lengths (out);
+        check (! len.empty() && std::all_of (len.begin(), len.end(), [] (uint32_t l) { return l >= 5999 && l <= 6001; }), "no variation (the default): every note is 6000 samples");
+
+        s.params = { { "Length Variation", "100" }, { "Seed", "5" } };
+        out = run (s);
+        len = lengths (out);
+        check (len.size() == 32 && notesOf (out, 0x90).size() == notesOf (out, 0x80).size(), "every note has its note-off");
+        check (std::all_of (len.begin(), len.end(), [] (uint32_t l) { return l >= 590 && l <= 6001; }), "100 %: no note is longer than the note length, or shorter than a tenth of it");
+        check (*std::min_element (len.begin(), len.end()) < 3000 && *std::max_element (len.begin(), len.end()) > 4500, "and they spread over that range");
+
+        s.params = { { "Length Variation", "40" }, { "Seed", "5" } };
+        len = lengths (run (s));
+        check (std::all_of (len.begin(), len.end(), [] (uint32_t l) { return l >= 3599 && l <= 6001; }), "40 %: between 60 % and all of the length");
+        check (lengths (run (s)) == len, "a fixed seed gives the same lengths again");
+
+        s.params = { { "Length Variation", "40" }, { "Seed", "6" } };
+        check (lengths (run (s)) != len, "and another seed other lengths");
+
+        // The length is the last of the step's random draws: what plays, when and how hard does not depend on it
+        Scenario without;
+        without.params = { { "Play Mode", "Random" }, { "Chance", "60" }, { "Velocity Variation", "20" }, { "Scale", "Chromatic" }, { "Seed", "9" } };
+        without.numBlocks = 750;
+        Scenario with = without;
+        with.params.push_back ({ "Length Variation", "80" });
+        const auto plain = notesOf (run (without), 0x90);
+        const auto varied = notesOf (run (with), 0x90);
+        bool same = plain.size() == varied.size() && ! plain.empty();
+        for (size_t i = 0; same && i < plain.size(); ++i)
+            same = plain[i].note == varied[i].note && plain[i].time == varied[i].time && plain[i].velocity == varied[i].velocity;
+        check (same, "the notes, their times and velocities are the same with and without length variation");
+
+        // With a cycle and the seed on Auto, every cycle has the same lengths as the one before
+        Scenario cycled;
+        cycled.params = { { "Length Variation", "100" }, { "Cycle Length", "4" } };
+        cycled.numBlocks = 563;
+        const auto cycledLengths = lengths (run (cycled));
+        bool repeats = cycledLengths.size() >= 17;
+        for (size_t i = 0; repeats && i + 8 < cycledLengths.size(); ++i)
+            repeats = cycledLengths[i] + 1 >= cycledLengths[i + 8] && cycledLengths[i] <= cycledLengths[i + 8] + 1;
+        check (repeats, "with a cycle of eight steps every cycle has the lengths of the one before");
+    }
+
     std::printf ("cycle length\n");
     {
         Scenario s;

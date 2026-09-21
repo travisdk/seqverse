@@ -21,7 +21,8 @@ private:
         std::unique_ptr<juce::ComboBoxParameterAttachment> attachment;
     };
 
-    struct Knob
+    // A slider with its name to the left and its value in a box to the right
+    struct Setting
     {
         juce::Label label;
         juce::Slider slider;
@@ -30,21 +31,29 @@ private:
 
     // Each control's component ID is its parameter ID, so tests can find it with findChildWithID().
     void setUpSelector (Selector&, const juce::String& text, juce::AudioParameterChoice&);
-    void setUpKnob (Knob&, const juce::String& text, juce::RangedAudioParameter&);
+    void setUpRow (Setting&, const juce::String& text, juce::RangedAudioParameter&);
 
     // Controls that have no effect with the current settings are disabled (dimmed), label included.
     void updateEnabledControls();
     static void setEnabled (Selector&, bool);
-    static void setEnabled (Knob&, bool);
+    static void setEnabled (Setting&, bool);
 
     SeqVerseProcessor& processor;
 
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
 
     juce::Label titleLabel;
-    Selector key, scale, stepRate, playMode, arpDirection, octaveNote, rhythm;
-    Knob chance, noteLength, swing, velocity, velocityVariation;
-    Knob lowOctave, octaves, channel, cycleLength, euclidSteps, euclidPulses, euclidRotation, seed;
+    // In three columns: pitch, rhythm and feel
+    Selector key, scale, octaveNote, playMode, arpDirection;
+    Setting lowOctave, octaves;
+    Selector stepRate, rhythm;
+    Setting euclidSteps, euclidPulses, euclidRotation, cycleLength, swing;
+    Selector noteLength;
+    Setting lengthVariation, velocity, velocityVariation, chance, channel, seed;
+
+    // The section headings, painted where resized() puts them
+    struct Heading { juce::String text; juce::Rectangle<int> area; };
+    std::vector<Heading> headings;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };

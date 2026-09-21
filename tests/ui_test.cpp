@@ -55,7 +55,7 @@ int main (int argc, char** argv)
     };
 
     const char* const alwaysEnabled[] = { "key", "scale", "playMode", "octaveNote", "stepRate", "noteLength", "chance", "swing",
-                                          "lowOctave", "octaves", "velocity", "velocityVariation", "channel", "cycleLength", "rhythm" };
+                                          "lowOctave", "octaves", "velocity", "velocityVariation", "channel", "cycleLength", "rhythm", "lengthVariation" };
     const auto othersEnabled = [&]
     {
         bool ok = true;
@@ -96,6 +96,13 @@ int main (int argc, char** argv)
     *processor.velocityVariationParam = 0;
     check (! enabled ("seed"), "the seed is disabled again without variation");
 
+    std::printf ("arpeggio with length variation\n");
+    *processor.lengthVariationParam = 30;
+    check (enabled ("seed"), "the seed is enabled: the lengths are random");
+    check (othersEnabled(), "and every other control is enabled, the length variation among them");
+    *processor.lengthVariationParam = 0;
+    check (! enabled ("seed"), "the seed is disabled again without variation");
+
     std::printf ("euclidean rhythm\n");
     *processor.rhythmParam = music::euclidean;
     check (enabled ("euclidSteps") && enabled ("euclidPulses") && enabled ("euclidRotation"), "the steps, pulses and rotation are enabled");
@@ -112,23 +119,28 @@ int main (int argc, char** argv)
     *processor.rhythmParam = music::everyStep;
     check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
 
+    std::printf ("a horizontal slider just above its minimum\n");
+    *processor.swingParam = 2;
+    snapshot ("swing2");
+    *processor.swingParam = 0;
+
     std::printf ("cycle length\n");
     {
-        auto* knob = dynamic_cast<juce::Slider*> (editor->findChildWithID ("cycleLength"));
-        check (knob != nullptr, "the cycle length is a knob");
-        if (knob != nullptr)
+        auto* cycleSlider = dynamic_cast<juce::Slider*> (editor->findChildWithID ("cycleLength"));
+        check (cycleSlider != nullptr, "the cycle length is a slider");
+        if (cycleSlider != nullptr)
         {
-            check (knob->getTextFromValue (0) == "Off", "at its minimum it says Off");
-            check (knob->getTextFromValue (1) == "0.5 beats" && knob->getTextFromValue (2) == "1 beat"
-                       && knob->getTextFromValue (8) == "4 beats" && knob->getTextFromValue (9) == "4.5 beats",
+            check (cycleSlider->getTextFromValue (0) == "Off", "at its minimum it says Off");
+            check (cycleSlider->getTextFromValue (1) == "0.5 beats" && cycleSlider->getTextFromValue (2) == "1 beat"
+                       && cycleSlider->getTextFromValue (8) == "4 beats" && cycleSlider->getTextFromValue (9) == "4.5 beats",
                    "half beats read as 0.5 beats, 1 beat, 4 beats, 4.5 beats");
         }
 
         // What is typed into the value box is taken the way the parameter takes it, not as half beats
-        if (knob != nullptr)
-            check (juce::roundToInt (knob->getValueFromText ("4.5")) == 9 && juce::roundToInt (knob->getValueFromText ("4.5 beats")) == 9
-                       && juce::roundToInt (knob->getValueFromText ("1")) == 2 && juce::roundToInt (knob->getValueFromText ("Off")) == 0
-                       && juce::roundToInt (knob->getValueFromText ("Endless")) == 0,
+        if (cycleSlider != nullptr)
+            check (juce::roundToInt (cycleSlider->getValueFromText ("4.5")) == 9 && juce::roundToInt (cycleSlider->getValueFromText ("4.5 beats")) == 9
+                       && juce::roundToInt (cycleSlider->getValueFromText ("1")) == 2 && juce::roundToInt (cycleSlider->getValueFromText ("Off")) == 0
+                       && juce::roundToInt (cycleSlider->getValueFromText ("Endless")) == 0,
                    "typing 4.5, 4.5 beats, 1, Off or Endless (the old name) gives 9, 9, 2, 0 and 0 half beats");
         auto* seedKnob = dynamic_cast<juce::Slider*> (editor->findChildWithID ("seed"));
         if (seedKnob != nullptr)
@@ -136,7 +148,7 @@ int main (int argc, char** argv)
                    "typing Auto or 42 in the seed box gives 0 and 42");
 
         *processor.cycleLengthParam = 9;
-        check (knob != nullptr && juce::roundToInt (knob->getValue()) == 9, "the knob follows the parameter");
+        check (cycleSlider != nullptr && juce::roundToInt (cycleSlider->getValue()) == 9, "the cycleSlider follows the parameter");
         check (enabled ("arpDirection") && ! enabled ("seed") && othersEnabled(), "a cycle changes nothing about which controls are enabled");
         snapshot ("cycle");
     }

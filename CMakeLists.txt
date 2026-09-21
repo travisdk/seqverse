@@ -112,3 +112,20 @@ target_link_libraries(KnobStyles
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# Design prototype, not part of the plugin: the controls in other layouts (with linear sliders), as PNG snapshots.
+#   cmake --build build --target LayoutMockup && ./build/LayoutMockup_artefacts/Release/LayoutMockup <output directory>
+juce_add_console_app(LayoutMockup PRODUCT_NAME "LayoutMockup")
+
+target_sources(LayoutMockup PRIVATE tools/layout_mockup.cpp)
+
+target_compile_definitions(LayoutMockup PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+
+target_link_libraries(LayoutMockup
+    PRIVATE
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)

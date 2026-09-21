@@ -3,18 +3,20 @@
 
 namespace
 {
-// JUCE draws its "Made with JUCE" badge in the bottom right corner of the editor. The last strip is left empty so
-// that it does not cover the seed knob.
-constexpr int kFooterHeight = 70;
+constexpr int kWidth = 840;
+constexpr int kMargin = 16;
+constexpr int kColumnGap = 20;
+constexpr int kColumns = 3;
 
-// Two rows of knobs, with space between them so that the value boxes of the first do not crowd the labels of the second
-constexpr int kKnobRowHeight = 160;
-constexpr int kKnobRowGap = 30;
-constexpr int kKnobsPerRow = 7;
+constexpr int kControlHeight = 26;   // a dropdown or a slider
+constexpr int kRowHeight = 34;       // a control and the gap to the next row
+constexpr int kRowsPerColumn = 7;
+constexpr int kLabelWidth = 88;
+constexpr int kValueWidth = 64;      // the value box of a slider, wide enough for "4.5 beats"
+constexpr int kHeadingHeight = 26;
 
-// Above the knobs: the margins, the title, and the three rows of selectors (252 pixels), then the footer without the
-// margin that is already counted
-constexpr int kHeight = 252 + (kFooterHeight - 16) + 2 * kKnobRowHeight + kKnobRowGap;
+// The margins, the title, the heading and the rows
+constexpr int kHeight = kMargin + 44 + kHeadingHeight + 4 + kRowsPerColumn * kRowHeight + kMargin;
 }
 
 SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
@@ -23,53 +25,54 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setLookAndFeel (&look); // the components below take their look from here
 
     titleLabel.setText ("SeqVerse", juce::dontSendNotification);
-    titleLabel.setJustificationType (juce::Justification::centred);
-    titleLabel.setFont (juce::Font (28.0f, juce::Font::bold));
+    titleLabel.setJustificationType (juce::Justification::centredLeft);
+    titleLabel.setFont (juce::Font (26.0f, juce::Font::bold));
     titleLabel.setColour (juce::Label::textColourId, theme::text);
     addAndMakeVisible (titleLabel);
 
     setUpSelector (key, "Key", *processor.keyParam);
     setUpSelector (scale, "Scale", *processor.scaleParam);
-    setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
+    setUpSelector (octaveNote, "Octave note", *processor.octaveNoteParam);
+    setUpRow (lowOctave, "Low octave", *processor.lowOctaveParam);
+    setUpRow (octaves, "Octaves", *processor.octavesParam);
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
-    setUpSelector (octaveNote, "Octave note", *processor.octaveNoteParam);
+
+    setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
     setUpSelector (rhythm, "Rhythm", *processor.rhythmParam);
-
-    setUpKnob (chance, "Chance", *processor.chanceParam);
-    chance.slider.setTextValueSuffix (" %");
-
-    setUpKnob (noteLength, "Note length", *processor.noteLengthParam);
-
-    setUpKnob (swing, "Swing", *processor.swingParam);
-    swing.slider.setTextValueSuffix (" %");
-
-    setUpKnob (velocity, "Velocity", *processor.velocityParam);
-    setUpKnob (velocityVariation, "Velocity +/-", *processor.velocityVariationParam);
-    setUpKnob (lowOctave, "Low octave", *processor.lowOctaveParam);
-    setUpKnob (octaves, "Octaves", *processor.octavesParam);
-    setUpKnob (channel, "Channel", *processor.channelParam);
 
     // The value text ("Off", "4.5 beats", "Auto") and what is typed into the value box are handled by the
     // parameters through the slider attachments, so the host shows the same text
-    setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
-    setUpKnob (euclidSteps, "Pattern length", *processor.euclidStepsParam);
-    setUpKnob (euclidPulses, "Pulses", *processor.euclidPulsesParam);
-    setUpKnob (euclidRotation, "Rotation", *processor.euclidRotationParam);
-    setUpKnob (seed, "Seed", *processor.seedParam);
+    setUpRow (euclidSteps, "Pattern length", *processor.euclidStepsParam);
+    setUpRow (euclidPulses, "Pulses", *processor.euclidPulsesParam);
+    setUpRow (euclidRotation, "Rotation", *processor.euclidRotationParam);
+    setUpRow (cycleLength, "Cycle length", *processor.cycleLengthParam);
+    setUpRow (swing, "Swing", *processor.swingParam);
+    swing.slider.setTextValueSuffix (" %");
+
+    setUpSelector (noteLength, "Note length", *processor.noteLengthParam);
+    setUpRow (lengthVariation, "Length var.", *processor.lengthVariationParam);
+    lengthVariation.slider.setTextValueSuffix (" %");
+    setUpRow (velocity, "Velocity", *processor.velocityParam);
+    setUpRow (velocityVariation, "Velocity +/-", *processor.velocityVariationParam);
+    setUpRow (chance, "Chance", *processor.chanceParam);
+    chance.slider.setTextValueSuffix (" %");
+    setUpRow (channel, "Channel", *processor.channelParam);
+    setUpRow (seed, "Seed", *processor.seedParam);
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
     rhythm.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
+    lengthVariation.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
 
     // The value boxes of the sliders were made before the sliders were children of the editor, so they did not know
     // about its look yet. This makes every control take it.
     sendLookAndFeelChange();
 
-    setSize (660, kHeight);
+    setSize (kWidth, kHeight);
 }
 
 SeqVerseEditor::~SeqVerseEditor()
@@ -90,9 +93,10 @@ void SeqVerseEditor::updateEnabledControls()
     setEnabled (euclidPulses, euclidean);
     setEnabled (euclidRotation, euclidean);
 
-    // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
-    // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
-    const bool anythingRandom = ! arpeggio || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0;
+    // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity or
+    // length variation. An arpeggio at 100 % with a fixed velocity and length has nothing to seed.
+    const bool anythingRandom = ! arpeggio || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0
+                                || processor.lengthVariationParam->get() > 0;
     setEnabled (seed, anythingRandom);
 }
 
@@ -102,10 +106,10 @@ void SeqVerseEditor::setEnabled (Selector& selector, bool enabled)
     selector.box.setEnabled (enabled);
 }
 
-void SeqVerseEditor::setEnabled (Knob& knob, bool enabled)
+void SeqVerseEditor::setEnabled (Setting& setting, bool enabled)
 {
-    knob.label.setEnabled (enabled);
-    knob.slider.setEnabled (enabled);
+    setting.label.setEnabled (enabled);
+    setting.slider.setEnabled (enabled);
 }
 
 void SeqVerseEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
@@ -120,64 +124,91 @@ void SeqVerseEditor::setUpSelector (Selector& selector, const juce::String& text
     selector.attachment = std::make_unique<juce::ComboBoxParameterAttachment> (parameter, selector.box);
 }
 
-void SeqVerseEditor::setUpKnob (Knob& knob, const juce::String& text, juce::RangedAudioParameter& parameter)
+void SeqVerseEditor::setUpRow (Setting& row, const juce::String& text, juce::RangedAudioParameter& parameter)
 {
-    knob.label.setText (text, juce::dontSendNotification);
-    knob.label.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (knob.label);
+    row.label.setText (text, juce::dontSendNotification);
+    row.label.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (row.label);
 
-    knob.slider.setComponentID (parameter.getParameterID());
-    knob.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    knob.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 22);
-    addAndMakeVisible (knob.slider);
+    row.slider.setComponentID (parameter.getParameterID());
+    row.slider.setSliderStyle (juce::Slider::LinearHorizontal);
+    row.slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, kValueWidth, 22);
+    addAndMakeVisible (row.slider);
 
-    knob.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, knob.slider);
+    row.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, row.slider);
 }
 
 void SeqVerseEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
+
+    // A heading is its name in the accent colour and a line to the end of its section
+    const juce::Font font (12.0f, juce::Font::bold);
+    g.setFont (font);
+    for (const auto& heading : headings)
+    {
+        const auto text = heading.text.toUpperCase();
+        g.setColour (theme::accent);
+        g.drawText (text, heading.area, juce::Justification::centredLeft);
+        g.setColour (theme::outline);
+        g.drawHorizontalLine (heading.area.getCentreY(), (float) heading.area.getX() + font.getStringWidthFloat (text) + 10.0f,
+                              (float) heading.area.getRight());
+    }
 }
 
 void SeqVerseEditor::resized()
 {
-    auto area = getLocalBounds().reduced (16);
-    titleLabel.setBounds (area.removeFromTop (40));
+    auto area = getLocalBounds().reduced (kMargin);
+    titleLabel.setBounds (area.removeFromTop (36));
     area.removeFromTop (8);
+    headings.clear();
 
-    // Selectors in a grid of three columns, two rows
-    const auto placeSelectors = [] (juce::Rectangle<int> row, std::initializer_list<Selector*> selectors)
+    // Three columns of seven rows, dropdowns and sliders, each with its name to the left
+    const int columnWidth = (area.getWidth() - (kColumns - 1) * kColumnGap) / kColumns;
+    const auto column = [&] (const juce::String& heading)
     {
-        const int width = row.getWidth() / 3;
-        for (auto* selector : selectors)
-        {
-            auto cell = row.removeFromLeft (width).reduced (6, 0);
-            selector->label.setBounds (cell.removeFromTop (20));
-            selector->box.setBounds (cell.removeFromTop (26));
-        }
+        auto cell = area.removeFromLeft (columnWidth);
+        area.removeFromLeft (kColumnGap);
+        headings.push_back ({ heading, cell.removeFromTop (kHeadingHeight) });
+        cell.removeFromTop (4);
+        return cell;
     };
 
-    placeSelectors (area.removeFromTop (46), { &key, &scale, &stepRate });
-    area.removeFromTop (10);
-    placeSelectors (area.removeFromTop (46), { &playMode, &arpDirection, &octaveNote });
-    area.removeFromTop (10);
-    placeSelectors (area.removeFromTop (46), { &rhythm });
-    area.removeFromTop (14);
-    area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
-
-    // Knobs: a grid of seven columns and two rows
-    const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
+    const auto place = [] (juce::Rectangle<int>& cell, juce::Component& label, juce::Component& control)
     {
-        const int width = row.getWidth() / kKnobsPerRow;
-        for (auto* knob : knobs)
-        {
-            auto cell = row.removeFromLeft (width);
-            knob->label.setBounds (cell.removeFromTop (20));
-            knob->slider.setBounds (cell);
-        }
+        auto row = cell.removeFromTop (kRowHeight).withHeight (kControlHeight);
+        label.setBounds (row.removeFromLeft (kLabelWidth));
+        control.setBounds (row);
     };
+    const auto placeSelector = [&] (juce::Rectangle<int>& cell, Selector& selector) { place (cell, selector.label, selector.box); };
+    const auto placeRow = [&] (juce::Rectangle<int>& cell, Setting& setting) { place (cell, setting.label, setting.slider); };
 
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation, &channel });
-    area.removeFromTop (kKnobRowGap);
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &octaves, &euclidSteps, &euclidPulses, &euclidRotation, &cycleLength, &seed });
+    auto pitchColumn = column ("Pitch");
+    placeSelector (pitchColumn, key);
+    placeSelector (pitchColumn, scale);
+    placeSelector (pitchColumn, octaveNote);
+    placeRow (pitchColumn, lowOctave);
+    placeRow (pitchColumn, octaves);
+    placeSelector (pitchColumn, playMode);
+    placeSelector (pitchColumn, arpDirection);
+
+    auto rhythmColumn = column ("Rhythm");
+    placeSelector (rhythmColumn, stepRate);
+    placeSelector (rhythmColumn, rhythm);
+    placeRow (rhythmColumn, euclidSteps);
+    placeRow (rhythmColumn, euclidPulses);
+    placeRow (rhythmColumn, euclidRotation);
+    placeRow (rhythmColumn, cycleLength);
+    placeRow (rhythmColumn, swing);
+
+    auto feelColumn = column ("Feel");
+    placeSelector (feelColumn, noteLength);
+    placeRow (feelColumn, lengthVariation);
+    placeRow (feelColumn, velocity);
+    placeRow (feelColumn, velocityVariation);
+    placeRow (feelColumn, chance);
+    placeRow (feelColumn, channel);
+    placeRow (feelColumn, seed);
+
+    repaint(); // the headings have moved
 }

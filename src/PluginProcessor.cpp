@@ -81,6 +81,7 @@ SeqVerseProcessor::SeqVerseProcessor()
                                                                          { return text.trim().equalsIgnoreCase ("auto") ? 0 : text.getIntValue(); })));
 
     // Added last, so that the parameters of sessions saved earlier keep their place
+    addParameter (lengthVariationParam = new Int ({ "lengthVariation", 1 }, "Length Variation", 0, 100, 0, percent));
     addParameter (rhythmParam = new Choice ({ "rhythm", 1 }, "Rhythm", namesOf (music::rhythmNames), music::everyStep));
     addParameter (euclidStepsParam = new Int ({ "euclidSteps", 1 }, "Pattern Length", music::kMinEuclidSteps, music::kMaxEuclidSteps, music::kDefaultEuclidSteps));
     addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Pulses", 0, music::kMaxEuclidPulses, music::kDefaultEuclidPulses));
@@ -151,6 +152,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     const int channel = channelParam->get();
     const int velocity = velocityParam->get();
     const int velocityVariation = velocityVariationParam->get();
+    const double lengthVariation = lengthVariationParam->get() / 100.0;
     const int seed = seedParam->get();
 
     const int cycleHalfBeats = cycleLengthParam->get(); // 0: off
@@ -201,6 +203,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         const int chanceDraw = stepRandom.nextInt (100);
         const int noteDraw = stepRandom.nextInt (poolSize);
         const int velocityDraw = stepRandom.nextInt (2 * velocityVariation + 1);
+        const int lengthDraw = stepRandom.nextInt (101); // always drawn, last, so that the ones before do not depend on it
 
         if (chanceDraw >= chancePercent)
             return;
@@ -217,7 +220,11 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 pending.position = onPosition;
 
         newNotes.push_back ({ channel, note, juce::jlimit (1, 127, velocity + velocityDraw - velocityVariation), (int) onPosition });
-        pendingNoteOffs.push_back ({ channel, note, onPosition + noteLengthSamples });
+        // The variation only shortens: between (100 - variation) % and the whole of the note length, but never below a
+        // tenth of it (and never to nothing, or a note-off would come before its own note-on).
+        const double lengthFactor = juce::jmax (0.1, 1.0 - lengthVariation * lengthDraw / 100.0);
+        const double length = juce::jmax (2.0, noteLengthSamples * lengthFactor);
+        pendingNoteOffs.push_back ({ channel, note, onPosition + length });
     };
 
     // A block owns the steps that start in it, so consecutive blocks never repeat or skip a step
