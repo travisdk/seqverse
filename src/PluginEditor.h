@@ -3,6 +3,17 @@
 #include "DarkLookAndFeel.h"
 #include "PluginProcessor.h"
 
+// A slider that can limit what the user does to it (dragging, the mouse wheel, the arrow keys, typing a value), and
+// nothing else: a value that arrives through its parameter, from the host or from a loaded session, is shown as it is.
+// It never writes a parameter itself.
+class LimitedSlider : public juce::Slider
+{
+public:
+    std::function<double (double)> limit;
+
+    double snapValue (double attemptedValue, DragMode) override { return limit != nullptr ? limit (attemptedValue) : attemptedValue; }
+};
+
 class SeqVerseEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -24,7 +35,7 @@ private:
     struct Knob
     {
         juce::Label label;
-        juce::Slider slider;
+        LimitedSlider slider;
         std::unique_ptr<juce::SliderParameterAttachment> attachment;
     };
 
@@ -44,7 +55,7 @@ private:
     juce::Label titleLabel;
     Selector key, scale, stepRate, playMode, arpDirection, octaveNote, rhythm;
     Knob chance, noteLength, swing, velocity, velocityVariation;
-    Knob lowOctave, highOctave, channel, cycleLength, euclidPulses, euclidRotation, seed;
+    Knob lowOctave, highOctave, channel, cycleLength, euclidSteps, euclidPulses, euclidRotation, seed;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };

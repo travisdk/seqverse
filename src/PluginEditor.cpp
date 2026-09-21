@@ -10,7 +10,7 @@ constexpr int kFooterHeight = 70;
 // Two rows of knobs, with space between them so that the value boxes of the first do not crowd the labels of the second
 constexpr int kKnobRowHeight = 160;
 constexpr int kKnobRowGap = 30;
-constexpr int kKnobsPerRow = 6;
+constexpr int kKnobsPerRow = 7;
 
 // Above the knobs: the margins, the title, and the three rows of selectors (252 pixels), then the footer without the
 // margin that is already counted
@@ -50,12 +50,27 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpKnob (highOctave, "High octave", *processor.highOctaveParam);
     setUpKnob (channel, "Channel", *processor.channelParam);
 
-    // The value text ("Endless", "4.5 beats", "Auto") and what is typed into the value box are handled by the
+    // The value text ("Off", "4.5 beats", "Auto") and what is typed into the value box are handled by the
     // parameters through the slider attachments, so the host shows the same text
     setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
+    setUpKnob (euclidSteps, "Pattern length", *processor.euclidStepsParam);
     setUpKnob (euclidPulses, "Pulses", *processor.euclidPulsesParam);
     setUpKnob (euclidRotation, "Rotation", *processor.euclidRotationParam);
     setUpKnob (seed, "Seed", *processor.seedParam);
+
+    // The low octave cannot be dragged above the high one, nor the high one below the low one. This is only about what
+    // the user does here: when the host has set them the other way round they are left alone (the sound is the same,
+    // the range is low..high either way), and nothing here ever writes the other parameter.
+    lowOctave.slider.limit = [this] (double value)
+    {
+        const int low = processor.lowOctaveParam->get(), high = processor.highOctaveParam->get();
+        return low <= high ? juce::jmin (value, (double) high) : value;
+    };
+    highOctave.slider.limit = [this] (double value)
+    {
+        const int low = processor.lowOctaveParam->get(), high = processor.highOctaveParam->get();
+        return low <= high ? juce::jmax (value, (double) low) : value;
+    };
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
@@ -83,8 +98,9 @@ void SeqVerseEditor::updateEnabledControls()
     // Only the arpeggio walks the pool in a direction
     setEnabled (arpDirection, arpeggio);
 
-    // The pulses and their rotation are the Euclidean rhythm's. Its length is the cycle length, which is always in use.
+    // The steps, pulses and rotation are the Euclidean rhythm's
     const bool euclidean = processor.rhythmParam->getIndex() == music::euclidean;
+    setEnabled (euclidSteps, euclidean);
     setEnabled (euclidPulses, euclidean);
     setEnabled (euclidRotation, euclidean);
 
@@ -163,7 +179,7 @@ void SeqVerseEditor::resized()
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 
-    // Knobs: a grid of six columns and two rows
+    // Knobs: a grid of seven columns and two rows
     const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
     {
         const int width = row.getWidth() / kKnobsPerRow;
@@ -177,5 +193,5 @@ void SeqVerseEditor::resized()
 
     placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation, &channel });
     area.removeFromTop (kKnobRowGap);
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &cycleLength, &euclidPulses, &euclidRotation, &seed });
+    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &euclidSteps, &euclidPulses, &euclidRotation, &cycleLength, &seed });
 }

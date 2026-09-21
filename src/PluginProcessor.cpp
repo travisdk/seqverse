@@ -29,7 +29,7 @@ juce::StringArray scaleNames()
 juce::String cycleLengthText (int halfBeats)
 {
     if (halfBeats <= 0)
-        return "Endless";
+        return "Off";
 
     return juce::String (halfBeats * 0.5, halfBeats % 2 != 0 ? 1 : 0) + (halfBeats == 2 ? " beat" : " beats");
 }
@@ -37,7 +37,7 @@ juce::String cycleLengthText (int halfBeats)
 int cycleLengthFromText (const juce::String& text)
 {
     const auto trimmed = text.trim();
-    if (trimmed.isEmpty() || trimmed.equalsIgnoreCase ("endless") || trimmed.equalsIgnoreCase ("off"))
+    if (trimmed.isEmpty() || trimmed.equalsIgnoreCase ("off") || trimmed.equalsIgnoreCase ("endless"))
         return 0;
 
     return juce::jlimit (0, music::kMaxCycleHalfBeats, juce::roundToInt (trimmed.getDoubleValue() * 2.0));
@@ -82,41 +82,12 @@ SeqVerseProcessor::SeqVerseProcessor()
 
     // Added last, so that the parameters of sessions saved earlier keep their place
     addParameter (rhythmParam = new Choice ({ "rhythm", 1 }, "Rhythm", namesOf (music::rhythmNames), music::everyStep));
+    addParameter (euclidStepsParam = new Int ({ "euclidSteps", 1 }, "Pattern Length", music::kMinEuclidSteps, music::kMaxEuclidSteps, music::kDefaultEuclidSteps));
     addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Pulses", 0, music::kMaxEuclidPulses, music::kDefaultEuclidPulses));
     addParameter (euclidRotationParam = new Int ({ "euclidRotation", 1 }, "Rotation", 0, music::kMaxEuclidRotation, 0));
-
-    lowOctaveParam->addListener (this);
-    highOctaveParam->addListener (this);
 }
 
-SeqVerseProcessor::~SeqVerseProcessor()
-{
-    lowOctaveParam->removeListener (this);
-    highOctaveParam->removeListener (this);
-    cancelPendingUpdate();
-}
-
-void SeqVerseProcessor::parameterValueChanged (int parameterIndex, float)
-{
-    // May be called from any thread, including the audio thread when the host automates the parameter.
-    if (parameterIndex != lowOctaveParam->getParameterIndex() && parameterIndex != highOctaveParam->getParameterIndex())
-        return;
-
-    lastChangedParameter = parameterIndex;
-    triggerAsyncUpdate();
-}
-
-void SeqVerseProcessor::handleAsyncUpdate()
-{
-    // The low octave is not above the high one: the one that was not just changed follows
-    if (lowOctaveParam->get() <= highOctaveParam->get())
-        return;
-
-    if (lastChangedParameter == lowOctaveParam->getParameterIndex())
-        *highOctaveParam = lowOctaveParam->get();
-    else
-        *lowOctaveParam = highOctaveParam->get();
-}
+SeqVerseProcessor::~SeqVerseProcessor() = default;
 
 void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
 {
@@ -182,7 +153,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     const int velocityVariation = velocityVariationParam->get();
     const int seed = seedParam->get();
 
-    const int cycleHalfBeats = cycleLengthParam->get(); // 0: endless
+    const int cycleHalfBeats = cycleLengthParam->get(); // 0: off
     const double cycleQuarters = cycleHalfBeats * 0.5;
 
     // With a cycle and the seed on Auto, every new play (and every new cycle length) rolls a new phrase, which then
@@ -192,15 +163,11 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     lastCycleHalfBeats = cycleHalfBeats;
     const int cycleSeed = seed > 0 ? seed : autoSeed;
 
-    // A Euclidean pattern is as long as the cycle, in steps. Without a cycle it is one bar of four beats, which every
-    // step rate fits a whole number of times, so a bar always starts with the pattern (the notes still go on endlessly).
+    // The pattern repeats every `steps` steps: on the step grid of the timeline, or from the start of each cycle.
+    // EuclidPattern takes any values: pulses above the steps play every step, and the rotation wraps round.
     const bool euclidean = rhythmParam->getIndex() == music::euclidean;
     if (euclidean)
-    {
-        const double patternQuarters = cycleHalfBeats == 0 ? 4.0 : cycleQuarters;
-        euclidPattern = music::EuclidPattern ((int) std::ceil (patternQuarters / stepQuarters - kBoundaryTolerance),
-                                              euclidPulsesParam->get(), euclidRotationParam->get());
-    }
+        euclidPattern = music::EuclidPattern (euclidStepsParam->get(), euclidPulsesParam->get(), euclidRotationParam->get());
 
     // Whatever the two octave parameters say, the range is low..high
     const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
@@ -259,7 +226,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     if (cycleHalfBeats == 0)
     {
-        // Endless. Step k is at k * stepQuarters, and odd steps are swung later, so a swung step starts up to one
+        // No cycle. Step k is at k * stepQuarters, and odd steps are swung later, so a swung step starts up to one
         // delay after its grid position. A fixed seed makes the random numbers depend on the seed and k only.
         for (auto step = firstStepAtOrAfter (startQuarters - swingDelayQuarters); step < firstStepAtOrAfter (endQuarters); ++step)
         {

@@ -509,6 +509,7 @@ int main (int argc, char** argv)
             { "Cycle Length", music::kMaxCycleHalfBeats, false },
             { "Seed", 9999, false },
             { "Rhythm", music::numRhythms - 1, true },
+            { "Pattern Length", music::kMaxEuclidSteps - music::kMinEuclidSteps, false },
             { "Pulses", music::kMaxEuclidPulses, false },
             { "Rotation", music::kMaxEuclidRotation, false },
         };
@@ -915,8 +916,11 @@ int main (int argc, char** argv)
         check (sameNotes (notesOf (run (s), 0x90), cycledArp (19, 9)), "picked by value, as a host sends it: 9 is 4.5 beats");
 
         s = Scenario();
-        s.params = { { "Cycle Length", "Endless" } };
-        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 7)), "Endless plays as if there was no cycle");
+        s.params = { { "Cycle Length", "Off" } };
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 7)), "Off plays as if there was no cycle");
+
+        s.params = { { "Cycle Length", "Endless" } }; // what it was called before
+        check (sameNotes (notesOf (run (s), 0x90), cycledArp (9, 7)), "the old name Endless is still understood when typed");
 
         s = Scenario();
         s.params = { { "Cycle Length", "0.5" } }; // one step per cycle
@@ -972,9 +976,9 @@ int main (int argc, char** argv)
         check (! cyclesRepeat (notesOf (run (s), 0x90), 96000, 3), "without a cycle length nothing repeats");
     }
 
-    // The Euclidean rhythm: the pulses are spread over the steps of the cycle, and Endless means one bar of four beats
-    // (eight 1/8 steps). With 5 pulses that is x.xx.xx. and with 3 x..x..x. Notes are C D E F G A B C D ... going up,
-    // one for each onset. A step is 12000 samples, a bar 8 steps.
+    // The Euclidean rhythm: `Pulses` spread over `Steps` steps, repeating freely on the step grid. With the defaults (8
+    // steps, 5 pulses) the pattern is x.xx.xx., and with 3 pulses x..x..x. Notes are C D E F G A B C D ... going up, one
+    // for each onset. A step is 12000 samples, so eight of them are a bar.
     std::printf ("euclidean rhythm\n");
     {
         const auto at = [] (std::vector<int> steps, std::vector<int> notes)
@@ -989,7 +993,7 @@ int main (int argc, char** argv)
         s.params = { { "Rhythm", "Euclidean" } };
         s.numBlocks = 370; // two bars: 16 steps, the first step of the third bar is not reached
         check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 2, 3, 5, 6, 8, 10, 11, 13, 14 }, { 60, 62, 64, 65, 67, 69, 71, 60, 62, 64 })),
-               "5 pulses (the default), Endless: x.xx.xx. in every bar, the arpeggio counting onsets, not steps");
+               "5 pulses in 8 steps (the defaults): x.xx.xx., the arpeggio counting onsets, not steps");
 
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" } };
         check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 3, 6, 8, 11, 14 }, { 60, 62, 64, 65, 67, 69 })), "3 pulses: x..x..x.");
@@ -998,34 +1002,63 @@ int main (int argc, char** argv)
         check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 4, 7, 9, 12, 15 }, { 60, 62, 64, 65, 67, 69 })), "rotation 1 moves the pattern one step later");
 
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" }, { "Rotation", "9" } };
-        check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 4, 7, 9, 12, 15 }, { 60, 62, 64, 65, 67, 69 })), "rotation wraps round: 9 is 1 in a bar of eight steps");
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 4, 7, 9, 12, 15 }, { 60, 62, 64, 65, 67, 69 })), "rotation wraps round: 9 is 1 with eight steps");
 
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "0" } };
         check (notesOf (run (s), 0x90).empty(), "0 pulses: silence");
 
-        s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "64" } };
-        s.numBlocks = 100;
-        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 1, 2, 3, 4 }, { 60, 62, 64, 65, 67 })), "more pulses than steps: every step plays");
+        // The length is a setting of its own and free of the bar: 7 steps, one pulse, is a note every 7 steps
+        s.params = { { "Rhythm", "Euclidean" }, { "Pattern Length", "7" }, { "Pulses", "1" } };
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 7, 14 }, { 60, 62, 64 })), "7 steps, 1 pulse: a note every 7 steps, drifting against the bar");
 
-        // The same pattern in the same place, whichever way the arpeggio is walked: only which note is played changes
+        // Three in seven is x.x.x.. in some rotation: 7 onsets in 16 steps (the third repeat has begun), all two or three steps apart
+        s.params = { { "Rhythm", "Euclidean" }, { "Pattern Length", "7" }, { "Pulses", "3" } };
+        {
+            const auto ons = notesOf (run (s), 0x90);
+            bool evenlySpread = ons.size() == 7;
+            for (size_t i = 1; i < ons.size(); ++i)
+            {
+                const uint32_t gap = (ons[i].time + 1 - ons[i - 1].time) / step; // +1: the times are within a sample
+                evenlySpread &= gap == 2 || gap == 3;
+            }
+            check (evenlySpread && ons[0].time == 0, "7 steps, 3 pulses: seven onsets in 16 steps, two or three steps apart, starting on one");
+        }
+
+        // The arp direction is followed. The pattern is where it was, only which note is played changes.
         s = Scenario();
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" }, { "Arp Direction", "Down" } };
         s.numBlocks = 190;
         check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 3, 6, 8 }, { 71, 69, 67, 65 })), "the arp direction is followed: down");
 
-        // The cycle length is the length of the pattern: 2 beats are four 1/8 steps, so 3 pulses are xxx. (three in four
-        // steps has one rest, and the pattern starts on an onset), and the arpeggio starts over in every cycle
+        // Values a host can send that a knob would not: more pulses than steps plays every step
+        s = Scenario();
+        s.rawParams = { { "Rhythm", 1 }, { "Pattern Length", 4 }, { "Pulses", 20 } };
+        s.numBlocks = 100;
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 1, 2, 3, 4 }, { 60, 62, 64, 65, 67 })), "20 pulses in 4 steps, set by a host: every step plays");
+
+        s.rawParams = { { "Rhythm", 1 }, { "Pattern Length", 6 }, { "Pulses", 3 }, { "Rotation", 31 } };
+        s.numBlocks = 190;
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 3, 5, 7 }, { 60, 62, 64, 65 })), "rotation 31 with 6 steps wraps round to 1: .x.x.x");
+
+        // With a cycle the pattern starts over in every cycle, and so does the arpeggio. 2 beats are four 1/8 steps: the
+        // pattern of 8 steps is cut short after four (x..x), and again in the next cycle.
         s = Scenario();
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" }, { "Cycle Length", "2" } };
         s.numBlocks = 190;
-        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 1, 2, 4, 5, 6, 8 }, { 60, 62, 64, 60, 62, 64, 60 })),
-               "cycle length 2 beats: a pattern of four steps, xxx., and the arpeggio restarts every cycle");
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 3, 4, 7, 8 }, { 60, 62, 60, 62, 60 })),
+               "cycle length 2 beats: the pattern of eight steps is cut short after four, and starts over with the arpeggio");
 
-        // 4.5 beats are nine steps, so the pattern starts over every nine steps, on the timeline from zero
+        // A pattern of the same length as the cycle just fits: 3 pulses in 4 steps
+        s.params = { { "Rhythm", "Euclidean" }, { "Pattern Length", "4" }, { "Pulses", "3" }, { "Cycle Length", "2" } };
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 1, 2, 4, 5, 6, 8 }, { 60, 62, 64, 60, 62, 64, 60 })), "4 steps in a cycle of 4 steps: 3 pulses are xxx.");
+
+        // 4.5 beats are nine steps, so an 8 step pattern gets a second onset at its ninth step (position 0 again) in
+        // each cycle, and the arpeggio counts the onsets in the cycle
         s = Scenario();
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "1" }, { "Cycle Length", "4.5" } };
         s.numBlocks = 422;
-        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 9, 18 }, { 60, 60, 60 })), "one pulse in a cycle of 4.5 beats: one note every nine steps");
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 8, 9, 17, 18 }, { 60, 62, 60, 62, 60 })),
+               "cycle of 4.5 beats, 8 steps and 1 pulse: onsets at steps 0 and 8 of each cycle, the arpeggio starting over");
 
         // 1/4T steps are 2/3 of a beat: two in a 1 beat cycle, the second one cut short. One pulse plays the first only.
         s = Scenario();
@@ -1033,18 +1066,18 @@ int main (int argc, char** argv)
         s.numBlocks = 150;
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 60, 60, 60 }, 0, samplesPerQuarter)), "1/4T steps in a 1 beat cycle: the pulse is on the first");
 
-        // Without a cycle a bar is four beats whatever the step rate: 1/4 steps are four to a bar
+        // The step rate is the pattern's step: 1/4 steps, 4 of them, one pulse is a note every four beats
         s = Scenario();
-        s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "1" }, { "Step Rate", "1/4" } };
+        s.params = { { "Rhythm", "Euclidean" }, { "Pattern Length", "4" }, { "Pulses", "1" }, { "Step Rate", "1/4" } };
         s.numBlocks = 370;
-        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62 }, 0, 4 * samplesPerQuarter)), "Endless with 1/4 steps: one pulse a bar, and the notes still go on");
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62 }, 0, 4 * samplesPerQuarter)), "1/4 steps, 4 steps and 1 pulse: a note every four beats");
 
-        // Joining in the middle of a bar: the pattern is where the timeline is, and so is the arpeggio (onset number 2 is E)
+        // Joining in the middle of a pattern: the pattern is where the timeline is, and so is the arpeggio (onset number 2 is E)
         s = Scenario();
         s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" } };
         s.startQuarters = 2.0; // step 4 of the bar
         s.numBlocks = 90;
-        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64 }, 2 * step)), "starting at step 4 of a bar: the next onset is step 6, the third pulse");
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64 }, 2 * step)), "starting at step 4: the next onset is step 6, the third pulse");
 
         // Chance and swing work on the onsets
         s = Scenario();
@@ -1074,12 +1107,13 @@ int main (int argc, char** argv)
         s.numBlocks = 100;
         check (sameNotes (notesOf (run (s), 0x90), at ({ 0, 3 }, { 60, 62 })), "picked by index, as a host sends them: Euclidean, 3 pulses");
 
+        // 3 pulses in 6 steps, one step later: .x.x.x, so every odd step, and a seven note scale comes round to C again
         s = Scenario();
-        s.params = { { "Rhythm", "Euclidean" }, { "Pulses", "3" }, { "Rotation", "1" }, { "Cycle Length", "4" } };
+        s.params = { { "Rhythm", "Euclidean" }, { "Pattern Length", "6" }, { "Pulses", "3" }, { "Rotation", "1" } };
         s.numBlocks = 370;
         s.roundTripState = true;
-        check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 4, 7, 9, 12, 15 }, { 60, 62, 64, 60, 62, 64 })),
-               "rhythm, pulses, rotation and cycle length come back after saving and loading");
+        check (sameNotes (notesOf (run (s), 0x90), at ({ 1, 3, 5, 7, 9, 11, 13, 15 }, { 60, 62, 64, 65, 67, 69, 71, 60 })),
+               "rhythm, steps, pulses and rotation come back after saving and loading");
     }
 
     std::printf ("saved state\n");

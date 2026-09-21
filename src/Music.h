@@ -109,7 +109,7 @@ constexpr int kDefaultStepRate = 4; // 1/8
 constexpr const char* stepRateNames[kNumStepRates] = { "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1/1" };
 constexpr double stepRateQuarters[kNumStepRates] = { 0.125, 1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 2.0, 4.0 };
 
-// The cycle length is counted in half beats: 0 is endless (no cycle), 1 is half a beat, 9 is 4.5 beats, up to 64 beats.
+// The cycle length is counted in half beats: 0 is off (no cycle), 1 is half a beat, 9 is 4.5 beats, up to 64 beats.
 constexpr int kMaxCycleHalfBeats = 128;
 
 constexpr int kNumNoteLengths = 6;
@@ -149,16 +149,18 @@ struct StepRandom
 // A Euclidean rhythm: `pulses` onsets spread as evenly as possible over `steps` steps, made with Bjorklund's
 // algorithm, so E(3,8) is x..x..x. and E(5,8) is x.xx.xx. The pattern starts on an onset, and `rotation` moves it
 // later by that many steps (wrapping round). It repeats every `steps` steps, and pulses are numbered from the start
-// of step 0 upwards, which is what the arpeggio position of the notes follows. The number of steps is not a
-// parameter: it is how many steps of the step rate fit in the cycle length (see SeqVerseProcessor::processBlock),
-// at most 64 beats of 1/32 steps.
+// of step 0 upwards, which is what the arpeggio position of the notes follows. The pattern runs freely on the step
+// grid, so its length need not be the bar's: 7 steps drift against a bar of 8. Pulses above the steps just play every
+// step, and the rotation wraps, so no combination of the three values is invalid.
 enum Rhythm { everyStep, euclidean, numRhythms };
 constexpr const char* rhythmNames[numRhythms] = { "Every step", "Euclidean" };
 
-constexpr int kMaxEuclidSteps = 512;
-constexpr int kMaxEuclidPulses = 64;
-constexpr int kMaxEuclidRotation = 63;
+constexpr int kMinEuclidSteps = 2;
+constexpr int kMaxEuclidSteps = 32;
+constexpr int kDefaultEuclidSteps = 8;
+constexpr int kMaxEuclidPulses = 32;
 constexpr int kDefaultEuclidPulses = 5;
+constexpr int kMaxEuclidRotation = 31;
 
 struct EuclidPattern
 {

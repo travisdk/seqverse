@@ -67,7 +67,7 @@ int main (int argc, char** argv)
     std::printf ("arpeggio, 100 %%, no velocity variation (the defaults)\n");
     check (enabled ("arpDirection"), "arp direction is enabled");
     check (! enabled ("seed"), "the seed is disabled: nothing is random");
-    check (! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled");
+    check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("arpeggio");
 
@@ -98,19 +98,52 @@ int main (int argc, char** argv)
 
     std::printf ("euclidean rhythm\n");
     *processor.rhythmParam = music::euclidean;
-    check (enabled ("euclidPulses") && enabled ("euclidRotation"), "the pulses and the rotation are enabled");
+    check (enabled ("euclidSteps") && enabled ("euclidPulses") && enabled ("euclidRotation"), "the steps, pulses and rotation are enabled");
     check (enabled ("arpDirection") && ! enabled ("seed"), "arp direction is enabled, and the seed is not: nothing is random at 100 %");
-    check (othersEnabled(), "all the other controls are enabled, the cycle length among them: it is the pattern's length");
+    check (othersEnabled(), "all the other controls are enabled, the cycle length among them");
     *processor.chanceParam = 70;
     check (enabled ("seed"), "the seed is enabled with a chance below 100 %");
     *processor.chanceParam = 100;
     *processor.euclidPulsesParam = 3;
-    *processor.cycleLengthParam = 6;
+    *processor.euclidStepsParam = 7;
     snapshot ("euclidean");
-    *processor.cycleLengthParam = 0;
+    *processor.euclidStepsParam = music::kDefaultEuclidSteps;
     *processor.euclidPulsesParam = music::kDefaultEuclidPulses;
     *processor.rhythmParam = music::everyStep;
-    check (! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
+    check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
+
+    // The low octave is not above the high one, and the other way round, as far as the user is concerned: what they do
+    // to a knob here is limited. What the host sets is never touched: nothing writes a parameter because another one
+    // changed, so a host that automates both, in any order, cannot be fought or pushed around.
+    std::printf ("low and high octave\n");
+    {
+        auto* low = dynamic_cast<LimitedSlider*> (editor->findChildWithID ("lowOctave"));
+        auto* high = dynamic_cast<LimitedSlider*> (editor->findChildWithID ("highOctave"));
+        check (low != nullptr && high != nullptr, "both are limited sliders");
+
+        // What the user can get the knob to, for a value they try
+        const auto limited = [] (LimitedSlider* slider, double attempted) { return juce::roundToInt (slider->limit (attempted)); };
+
+        if (low != nullptr && high != nullptr)
+        {
+            *processor.lowOctaveParam = 2;
+            *processor.highOctaveParam = 5;
+            check (limited (low, 7) == 5 && limited (low, 1) == 1, "the user cannot drag or type the low octave above the high one (5)");
+            check (limited (high, 0) == 2 && limited (high, 7) == 7, "nor the high octave below the low one (2)");
+
+            // The host sets the low octave above the high one, as automation or a generic parameter list can
+            *processor.lowOctaveParam = 6;
+            check (processor.lowOctaveParam->get() == 6 && processor.highOctaveParam->get() == 5, "set by the host, the other parameter is left alone");
+            check (juce::roundToInt (low->getValue()) == 6 && juce::roundToInt (high->getValue()) == 5, "and the knobs show what the parameters say");
+            check (limited (low, 7) == 7 && limited (high, 0) == 0, "while they are crossed the user is not restricted, so it can be put right");
+
+            *processor.highOctaveParam = 7;
+            check (limited (low, 9) == 7 && limited (low, 3) == 3 && limited (high, 0) == 6, "back in order (6 and 7): limited again");
+
+            *processor.lowOctaveParam = music::kDefaultOctave;
+            *processor.highOctaveParam = music::kDefaultOctave;
+        }
+    }
 
     std::printf ("cycle length\n");
     {
@@ -118,7 +151,7 @@ int main (int argc, char** argv)
         check (knob != nullptr, "the cycle length is a knob");
         if (knob != nullptr)
         {
-            check (knob->getTextFromValue (0) == "Endless", "at its minimum it says Endless");
+            check (knob->getTextFromValue (0) == "Off", "at its minimum it says Off");
             check (knob->getTextFromValue (1) == "0.5 beats" && knob->getTextFromValue (2) == "1 beat"
                        && knob->getTextFromValue (8) == "4 beats" && knob->getTextFromValue (9) == "4.5 beats",
                    "half beats read as 0.5 beats, 1 beat, 4 beats, 4.5 beats");
@@ -127,8 +160,9 @@ int main (int argc, char** argv)
         // What is typed into the value box is taken the way the parameter takes it, not as half beats
         if (knob != nullptr)
             check (juce::roundToInt (knob->getValueFromText ("4.5")) == 9 && juce::roundToInt (knob->getValueFromText ("4.5 beats")) == 9
-                       && juce::roundToInt (knob->getValueFromText ("1")) == 2 && juce::roundToInt (knob->getValueFromText ("Endless")) == 0,
-                   "typing 4.5, 4.5 beats, 1 or Endless gives 9, 9, 2 and 0 half beats");
+                       && juce::roundToInt (knob->getValueFromText ("1")) == 2 && juce::roundToInt (knob->getValueFromText ("Off")) == 0
+                       && juce::roundToInt (knob->getValueFromText ("Endless")) == 0,
+                   "typing 4.5, 4.5 beats, 1, Off or Endless (the old name) gives 9, 9, 2, 0 and 0 half beats");
         auto* seedKnob = dynamic_cast<juce::Slider*> (editor->findChildWithID ("seed"));
         if (seedKnob != nullptr)
             check (juce::roundToInt (seedKnob->getValueFromText ("Auto")) == 0 && juce::roundToInt (seedKnob->getValueFromText ("42")) == 42,

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
 
@@ -16,12 +15,13 @@
 // With a cycle length, the step grid restarts every cycle (cycles start at multiples of the cycle length on the host
 // timeline) and everything about a step depends on its number within the cycle, so each cycle repeats the last one.
 //
-// The rhythm is either "every step" (each step has its chance), or a Euclidean pattern: pulses spread evenly over the
-// steps of a cycle, so the cycle length is also the length of the pattern (a bar, when the cycle is endless). Only the
+// The rhythm is either "every step" (each step has its chance), or a Euclidean pattern: pulses spread evenly over a
+// number of steps, repeating freely on the step grid (or from the start of each cycle, when there is one). Only the
 // steps that are onsets of the pattern get their chance, and the arpeggio advances by one note per onset.
-class SeqVerseProcessor : public juce::AudioProcessor,
-                                private juce::AudioProcessorParameter::Listener,
-                                private juce::AsyncUpdater
+//
+// No parameter is ever written in reaction to another one. Whatever the host sets, in any combination (a low octave
+// above the high one, more pulses than steps), processBlock uses the values it can make sense of.
+class SeqVerseProcessor : public juce::AudioProcessor
 {
 public:
     SeqVerseProcessor();
@@ -61,15 +61,16 @@ public:
     juce::AudioParameterChoice* noteLengthParam = nullptr;
     juce::AudioParameterInt* chanceParam = nullptr;            // percent
     juce::AudioParameterInt* swingParam = nullptr;             // percent, 100 is a full triplet swing
-    juce::AudioParameterInt* lowOctaveParam = nullptr;         // never above the high octave, see below
+    juce::AudioParameterInt* lowOctaveParam = nullptr;         // may be set above the high octave: the range is low..high either way
     juce::AudioParameterInt* highOctaveParam = nullptr;
     juce::AudioParameterInt* velocityParam = nullptr;
     juce::AudioParameterInt* velocityVariationParam = nullptr; // plus or minus
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16
-    juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is endless
+    juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is off
     juce::AudioParameterInt* seedParam = nullptr;              // 0 is a different sequence every time
     juce::AudioParameterChoice* rhythmParam = nullptr;
-    juce::AudioParameterInt* euclidPulsesParam = nullptr;      // Euclidean rhythm: onsets in the pattern, never more than its steps
+    juce::AudioParameterInt* euclidStepsParam = nullptr;       // Euclidean rhythm: the pattern's length
+    juce::AudioParameterInt* euclidPulsesParam = nullptr;      // ... its onsets (all steps play if there are more than steps)
     juce::AudioParameterInt* euclidRotationParam = nullptr;    // ... and how many steps it is moved later
 
 private:
@@ -88,12 +89,6 @@ private:
         int position; // samples from the start of the current block
     };
 
-    // The low octave must not be above the high octave. processBlock copes with any combination, and this keeps the
-    // two parameters themselves consistent: the one that was not just changed follows, on the message thread.
-    void parameterValueChanged (int parameterIndex, float newValue) override;
-    void parameterGestureChanged (int, bool) override {}
-    void handleAsyncUpdate() override;
-
     double sampleRate = 44100.0;
     double internalPpq = 0.0; // only used when the host does not report its PPQ position
     bool wasPlaying = false;
@@ -103,8 +98,6 @@ private:
     // transport starts and when the cycle length changes.
     int autoSeed = 1;
     int lastCycleHalfBeats = -1;
-
-    std::atomic<int> lastChangedParameter { -1 }; // the index of the octave parameter that changed last
 
     music::EuclidPattern euclidPattern { 1, 0, 0 }; // rebuilt in each block that uses it, so it needs no allocation
 
