@@ -101,6 +101,9 @@ public:
     bool isRecording() const { return takeState.load() == take::recording; }
     int getTakeCount() const { return takeCount.load(); } // goes up with each take that is written
 
+    // Whether the host's transport was playing in the last block, for the editor, which does not let Record be toggled then
+    bool isHostPlaying() const { return hostPlaying.load(); }
+
 private:
     struct PendingNoteOff
     {
@@ -158,6 +161,8 @@ private:
     double takeEnd = 0.0; // beats from the start of the take to the end of the last block
     std::atomic<int> takeState { take::idle };
     std::atomic<int> takeCount { 0 };
+    std::atomic<bool> hostPlaying { false };
+    std::atomic<bool> unarmRecord { false }; // a take has ended: the writer thread switches Record off (the audio thread must not)
     std::unique_ptr<TakeWriter> takeWriter;
 
     mutable juce::CriticalSection lastTakeLock; // the writer and the editor only, never the audio thread

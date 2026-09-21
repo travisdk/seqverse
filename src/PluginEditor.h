@@ -4,7 +4,7 @@
 #include "PluginProcessor.h"
 
 // The take, as a page that is dragged into the host: dragging it out starts a drag of the MIDI file
-class TakeIcon : public juce::Component
+class TakeIcon : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     void setFile (const juce::File& newFile);
@@ -61,6 +61,7 @@ private:
     SeqVerseProcessor& processor;
 
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
+    juce::TooltipWindow tooltipWindow { this }; // shows the tooltips of the take icon and the folder button
 
     juce::Label titleLabel;
     // In three columns: pitch, rhythm and feel
@@ -85,6 +86,8 @@ private:
     juce::TextButton openFolder; // the takes folder, where the files can be dragged into the host from the file manager
     int shownTakeCount = -1;
     bool shownRecording = false;
+    bool shownPlaying = false;
+    bool shownArmed = false;
 
     // The section headings, painted where resized() puts them
     struct Heading { juce::String text; juce::Rectangle<int> area; };

@@ -100,11 +100,14 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     takeStatus.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (takeStatus);
     takeIcon.setComponentID ("takeIcon");
+    takeIcon.setTooltip ("Drag the take into your host. Not every host accepts a file dragged from a plugin: "
+                         "if nothing happens, use Open folder and drag the file from there.");
     addAndMakeVisible (takeIcon);
 
     // Dragging the page out does not work in every host (Bitwig on Linux does not take it), and a file manager does
     openFolder.setButtonText ("Open folder");
     openFolder.setComponentID ("openFolder");
+    openFolder.setTooltip ("Opens the folder with the takes. This works in every host: drag the file from there into it.");
     openFolder.onClick = [] { SeqVerseProcessor::getTakeFolder().revealToUser(); };
     addAndMakeVisible (openFolder);
 
@@ -152,6 +155,10 @@ void SeqVerseEditor::updateEnabledControls()
 
     // The number of bars only matters when recording
     setEnabled (recordBars, processor.recordParam->get());
+
+    // Record is armed while the host is stopped: it decides what the next start does, and a take switches it off again
+    shownPlaying = processor.isHostPlaying();
+    record.button.setEnabled (! shownPlaying);
 }
 
 // What the recording is doing, and the last take as a page to drag
@@ -179,10 +186,18 @@ void SeqVerseEditor::showTake()
     takeStatus.setText (text, juce::dontSendNotification);
     shownTakeCount = processor.getTakeCount();
     shownRecording = processor.isRecording();
+    shownArmed = processor.recordParam->get();
 }
 
 void SeqVerseEditor::timerCallback()
 {
+    // Record can be switched off by the plugin when a take ends, and the host can start and stop at any time
+    if (processor.isHostPlaying() != shownPlaying || processor.recordParam->get() != shownArmed)
+    {
+        updateEnabledControls();
+        showTake();
+    }
+
     if (processor.getTakeCount() != shownTakeCount || processor.isRecording() != shownRecording)
         showTake();
 }

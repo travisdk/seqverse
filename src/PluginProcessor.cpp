@@ -94,6 +94,11 @@ public:
     {
         while (! threadShouldExit())
         {
+            // A take is one-shot: Record goes back to unarmed. This is the only place that writes it, since the audio
+            // thread must not set parameters. It is not a reaction to another parameter.
+            if (owner.unarmRecord.exchange (false))
+                owner.recordParam->setValueNotifyingHost (0.0f);
+
             if (owner.takeState.load (std::memory_order_acquire) == take::finished)
                 owner.writeTake();
 
@@ -168,6 +173,7 @@ void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
     sampleRate = newSampleRate;
     internalPpq = 0.0;
     wasPlaying = false;
+    hostPlaying = false;
     recording = false;
     if (takeState.load() == take::recording)
         takeState.store (take::idle);
@@ -201,6 +207,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         pendingNoteOffs.clear();
         internalPpq = 0.0;
         wasPlaying = false;
+        hostPlaying = false;
 
         BlockInfo stopped;
         stopped.numSamples = numSamples;
@@ -219,6 +226,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     const bool justStarted = ! wasPlaying;
     wasPlaying = true;
+    hostPlaying = true;
 
     // Settings for this block
     const auto& scale = music::scales[scaleParam->getIndex()];
@@ -451,6 +459,8 @@ void SeqVerseProcessor::finishTake (double endBeats)
 {
     current.endBeats = endBeats;
     recording = false;
+    if (recordParam->get())
+        unarmRecord = true;
     takeState.store (current.noteOns > 0 ? take::finished : take::idle, std::memory_order_release);
 }
 

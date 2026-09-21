@@ -284,7 +284,10 @@ struct Scenario
     bool octaveNote = false;
 
     bool keepTakes = false; // the files of the earlier runs are left in the takes folder
+    bool readRecordAtEnd = false; // wait for the writer, then read the Record parameter into recordAtEnd
 };
+
+double recordAtEnd = -1.0; // what the host sees Record at after a scenario with readRecordAtEnd
 
 // Runs a scenario on a fresh plugin instance and returns what the plugin emitted.
 std::vector<clap_event_midi_t> run (const Scenario& s)
@@ -377,6 +380,16 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
         transport.song_pos_beats = (clap_beattime) std::llround (quarters * CLAP_BEATTIME_FACTOR);
 
         processBlock (inst, start, s.sendTransport ? &transport : nullptr);
+    }
+
+    if (s.readRecordAtEnd)
+    {
+        usleep (300 * 1000); // Record is switched off by the writer thread, a moment after the take is finished
+        double value = -1.0;
+        const auto found = inst.infos.find ("Record");
+        if (found != inst.infos.end() && inst.params != nullptr)
+            inst.params->get_value (inst.plugin, found->second.id, &value);
+        recordAtEnd = value;
     }
 
     destroyInstance (inst);
@@ -1548,7 +1561,7 @@ int main (int argc, char** argv)
         s.sendTransport = false;
         check ((run (s), readTake()).files == 0, "and neither does a host that sends no transport");
 
-        // A second take replaces the first: the file of the first is deleted, so that only one is left
+        // Record is one-shot: a start after the first take has ended does not record a second one
         s = Scenario();
         s.rawParams = { { "Record", 1 } };
         s.params = { { "Record Bars", "1" } };
@@ -1557,14 +1570,13 @@ int main (int argc, char** argv)
         s.numBlocks = 500;
         run (s);
         const auto both = takeFiles();
-        bool firstKept = false, secondKept = false;
+        bool firstKept = false;
         for (const auto& file : both)
         {
             const auto t = readTakeFile (file);
             firstKept |= t.notes.size() == 5 && endsAtTick (t, 2048);
-            secondKept |= t.notes.size() == 8 && sameTakeNotes (t.notes, takeGrid (8, 9, 224)) && endsAtTick (t, 3840);
         }
-        check (both.size() == 2 && firstKept && secondKept, "started again after a stop: both takes are files, the second from its own first beat");
+        check (both.size() == 1 && firstKept, "started again after a stop: Record was switched off by the first take, so only that one is a file");
 
         // The name says when, and what was played
         s = Scenario();
@@ -1589,6 +1601,40 @@ int main (int argc, char** argv)
         s.stopBlock = 100;
         take = (run (s), readTake());
         check (take.name.find (" - Up-Down - 1-8 - 0.5 bars.mid") != std::string::npos, "a take that was stopped early says how long it was: 0.5 bars");
+
+        // Record is one-shot: it is unarmed again once a take is done, however it ended
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.readRecordAtEnd = true;
+        s.numBlocks = 300; // the bar is 188 blocks: the take ends by its length, and the transport is still playing
+        run (s);
+        check (recordAtEnd == 0.0, "Record is off again after a take of its bars");
+
+        s.params = { { "Record Bars", "No limit" } };
+        s.stopBlock = 100;
+        run (s);
+        check (recordAtEnd == 0.0, "and after a take that the stop ended");
+
+        s.params = { { "Record Bars", "No limit" }, { "Chance", "0" } };
+        run (s);
+        check (recordAtEnd == 0.0, "and after a take without notes, which is not kept");
+
+        s = Scenario();
+        s.params = { { "Record Bars", "1" } };
+        s.readRecordAtEnd = true;
+        s.numBlocks = 300;
+        run (s);
+        check (recordAtEnd == 0.0, "Record that was never armed stays off");
+
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.readRecordAtEnd = true;
+        s.playing = false;
+        s.numBlocks = 300;
+        run (s);
+        check (recordAtEnd == 1.0, "Record stays armed when the host never plays");
 
         // Only the newest five are kept, the others of the same kind are deleted, and other files are not touched
         s = Scenario();

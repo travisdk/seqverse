@@ -53,6 +53,10 @@ public:
         setColour (juce::TextEditor::outlineColourId, theme::outline);
         setColour (juce::TextEditor::focusedOutlineColourId, theme::accent);
         setColour (juce::CaretComponent::caretColourId, theme::accent);
+
+        setColour (juce::TooltipWindow::backgroundColourId, theme::menu);
+        setColour (juce::TooltipWindow::textColourId, theme::text);
+        setColour (juce::TooltipWindow::outlineColourId, theme::outline);
     }
 
     // A thin ring on a dark hub, with the value drawn as a glowing arc that ends in a small white dot

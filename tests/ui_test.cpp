@@ -181,6 +181,12 @@ int main (int argc, char** argv)
     {
         check (! enabled ("recordBars"), "the number of bars is disabled while Record is off");
         check (enabled ("record"), "the Record button is enabled");
+        for (const char* id : { "takeIcon", "openFolder" })
+        {
+            auto* tip = dynamic_cast<juce::TooltipClient*> (editor->findChildWithID (id));
+            check (tip != nullptr && tip->getTooltip().containsIgnoreCase ("folder"),
+                   (std::string (id) + " has a tooltip that points to the folder").c_str());
+        }
         check (! enabled ("takeIcon") && ! enabled ("openFolder"), "there is no take yet, so the page cannot be dragged and there is no folder to open");
         snapshot ("record_off");
 
@@ -215,6 +221,10 @@ int main (int argc, char** argv)
                 check (processor.isRecording(), "the first block after the start begins the take");
         }
 
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+        check (! enabled ("record"), "Record cannot be toggled while the host is playing");
+        check (processor.recordParam->get(), "and it is still armed while the take is being recorded");
+
         transport.playing = false;
         processor.processBlock (audio, midi);
         check (! processor.isRecording(), "the stop ends the take");
@@ -229,10 +239,17 @@ int main (int argc, char** argv)
         check (enabled ("takeIcon") && enabled ("openFolder"), "the page can be dragged now, and the folder can be opened");
         snapshot ("record_take");
 
+        check (! processor.recordParam->get() && recordButton != nullptr && ! recordButton->getToggleState(),
+               "the take is done, so Record is unarmed again, and the button shows it");
+        check (enabled ("record") && ! enabled ("recordBars"), "the host is stopped: Record can be toggled again, and the number of bars is disabled");
+
         processor.setPlayHead (nullptr);
         if (recordButton != nullptr)
             click();
-        check (! processor.recordParam->get() && ! enabled ("recordBars"), "clicking Record again disarms it, and the number of bars is disabled");
+        check (processor.recordParam->get(), "clicking Record arms it again");
+        if (recordButton != nullptr)
+            click();
+        check (! processor.recordParam->get() && ! enabled ("recordBars"), "and clicking it again disarms it");
     }
 
     std::printf ("every control has a parameter behind it\n");
