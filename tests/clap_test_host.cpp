@@ -502,7 +502,7 @@ int main (int argc, char** argv)
             { "Chance", 100, false },
             { "Swing", 100, false },
             { "Low Octave", music::kMaxOctave - music::kMinOctave, false },
-            { "High Octave", music::kMaxOctave - music::kMinOctave, false },
+            { "Octaves", music::kMaxOctaves - 1, false },
             { "Velocity", 126, false },
             { "Velocity Variation", 64, false },
             { "Channel", 15, false },
@@ -567,7 +567,7 @@ int main (int argc, char** argv)
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 60, 64, 60, 65, 60, 67, 60 }, 0)), "Thumb Up still returns to the root between the notes");
 
         // Octaves 3 to 4 is 14 notes, and the root above the range is octave 5
-        s.params = { { "Low Octave", "3" }, { "Arp Direction", "Down" } };
+        s.params = { { "Low Octave", "3" }, { "Octaves", "2" }, { "Arp Direction", "Down" } };
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 72, 71, 69, 67, 65, 64, 62, 60, 59 }, 0)),
                "over octaves 3 to 4 the top note is the root of octave 5: C5 B A G F E D C B");
 
@@ -824,13 +824,20 @@ int main (int argc, char** argv)
     std::printf ("octave range\n");
     {
         Scenario s;
-        s.params = { { "Low Octave", "3" }, { "High Octave", "5" } };
+        s.params = { { "Low Octave", "3" }, { "Octaves", "3" } };
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 48, 50, 52, 53, 55, 57, 59, 60, 62 }, 0)),
                "octaves 3 to 5: the arp starts in octave 3 and climbs into 4");
 
-        s.params = { { "Low Octave", "6" }, { "High Octave", "4" } };
-        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 72, 74 }, 0)),
-               "low above high: the range is 4 to 6 anyway");
+        // Octaves that reach past the top are cut off there: from octave 6, four octaves are just 6 and 7
+        s.params = { { "Low Octave", "6" }, { "Octaves", "4" }, { "Arp Direction", "Down" } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 107, 105, 103, 101, 100, 98, 96, 95, 93 }, 0)),
+               "four octaves from octave 6, going down: the top is B7, cut off at octave 7");
+
+        // The most a host can ask for, sent by value: the top note is the root above octave 7, still a valid note
+        s = Scenario();
+        s.octaveNote = true;
+        s.rawParams = { { "Low Octave", 7 }, { "Octaves", 8 }, { "Arp Direction", 1 } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 108, 107, 105, 103 }, 0), true), "octave 7 with 8 octaves, going down: from C8, the root above the range");
     }
 
     std::printf ("velocity, variation and channel\n");
@@ -1124,7 +1131,7 @@ int main (int argc, char** argv)
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 66, 67, 69, 71, 73, 74, 64, 66 }, 0)),
                "key and scale come back after loading: E dorian");
 
-        s.params = { { "Step Rate", "1/4" }, { "Low Octave", "3" }, { "High Octave", "3" }, { "Channel", "3" }, { "Velocity", "77" } };
+        s.params = { { "Step Rate", "1/4" }, { "Low Octave", "3" }, { "Channel", "3" }, { "Velocity", "77" } };
         const auto out = run (s);
         const auto ons = notesOf (out, 0x90);
         check (sameNotes (ons, grid ({ 48, 50, 52, 53, 55 }, 0, 2 * step)), "step rate and octaves come back: 1/4 steps in octave 3");

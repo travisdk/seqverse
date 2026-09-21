@@ -66,7 +66,7 @@ SeqVerseProcessor::SeqVerseProcessor()
     addParameter (chanceParam = new Int ({ "chance", 1 }, "Chance", 0, 100, 100, percent));
     addParameter (swingParam = new Int ({ "swing", 1 }, "Swing", 0, 100, 0, percent));
     addParameter (lowOctaveParam = new Int ({ "lowOctave", 1 }, "Low Octave", music::kMinOctave, music::kMaxOctave, music::kDefaultOctave));
-    addParameter (highOctaveParam = new Int ({ "highOctave", 1 }, "High Octave", music::kMinOctave, music::kMaxOctave, music::kDefaultOctave));
+    addParameter (octavesParam = new Int ({ "octaves", 1 }, "Octaves", 1, music::kMaxOctaves, music::kDefaultOctaves));
     addParameter (velocityParam = new Int ({ "velocity", 1 }, "Velocity", 1, 127, 100));
     addParameter (velocityVariationParam = new Int ({ "velocityVariation", 1 }, "Velocity Variation", 0, 64, 0));
     addParameter (channelParam = new Int ({ "channel", 1 }, "Channel", 1, 16, 1));
@@ -169,9 +169,9 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     if (euclidean)
         euclidPattern = music::EuclidPattern (euclidStepsParam->get(), euclidPulsesParam->get(), euclidRotationParam->get());
 
-    // Whatever the two octave parameters say, the range is low..high
-    const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
-    const int highOctave = juce::jmax (lowOctaveParam->get(), highOctaveParam->get());
+    // The range is `octaves` octaves from the low one, and stops at the top octave
+    const int lowOctave = lowOctaveParam->get();
+    const int highOctave = juce::jmin (music::kMaxOctave, lowOctave + octavesParam->get() - 1);
     const int scaleNotes = (highOctave - lowOctave + 1) * scale.size;
     const int poolSize = scaleNotes + (octaveNoteParam->getIndex() == music::includeOctaveNote ? 1 : 0); // the last is the octave note
 

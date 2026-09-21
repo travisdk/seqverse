@@ -55,7 +55,7 @@ int main (int argc, char** argv)
     };
 
     const char* const alwaysEnabled[] = { "key", "scale", "playMode", "octaveNote", "stepRate", "noteLength", "chance", "swing",
-                                          "lowOctave", "highOctave", "velocity", "velocityVariation", "channel", "cycleLength", "rhythm" };
+                                          "lowOctave", "octaves", "velocity", "velocityVariation", "channel", "cycleLength", "rhythm" };
     const auto othersEnabled = [&]
     {
         bool ok = true;
@@ -111,39 +111,6 @@ int main (int argc, char** argv)
     *processor.euclidPulsesParam = music::kDefaultEuclidPulses;
     *processor.rhythmParam = music::everyStep;
     check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
-
-    // The low octave is not above the high one, and the other way round, as far as the user is concerned: what they do
-    // to a knob here is limited. What the host sets is never touched: nothing writes a parameter because another one
-    // changed, so a host that automates both, in any order, cannot be fought or pushed around.
-    std::printf ("low and high octave\n");
-    {
-        auto* low = dynamic_cast<LimitedSlider*> (editor->findChildWithID ("lowOctave"));
-        auto* high = dynamic_cast<LimitedSlider*> (editor->findChildWithID ("highOctave"));
-        check (low != nullptr && high != nullptr, "both are limited sliders");
-
-        // What the user can get the knob to, for a value they try
-        const auto limited = [] (LimitedSlider* slider, double attempted) { return juce::roundToInt (slider->limit (attempted)); };
-
-        if (low != nullptr && high != nullptr)
-        {
-            *processor.lowOctaveParam = 2;
-            *processor.highOctaveParam = 5;
-            check (limited (low, 7) == 5 && limited (low, 1) == 1, "the user cannot drag or type the low octave above the high one (5)");
-            check (limited (high, 0) == 2 && limited (high, 7) == 7, "nor the high octave below the low one (2)");
-
-            // The host sets the low octave above the high one, as automation or a generic parameter list can
-            *processor.lowOctaveParam = 6;
-            check (processor.lowOctaveParam->get() == 6 && processor.highOctaveParam->get() == 5, "set by the host, the other parameter is left alone");
-            check (juce::roundToInt (low->getValue()) == 6 && juce::roundToInt (high->getValue()) == 5, "and the knobs show what the parameters say");
-            check (limited (low, 7) == 7 && limited (high, 0) == 0, "while they are crossed the user is not restricted, so it can be put right");
-
-            *processor.highOctaveParam = 7;
-            check (limited (low, 9) == 7 && limited (low, 3) == 3 && limited (high, 0) == 6, "back in order (6 and 7): limited again");
-
-            *processor.lowOctaveParam = music::kDefaultOctave;
-            *processor.highOctaveParam = music::kDefaultOctave;
-        }
-    }
 
     std::printf ("cycle length\n");
     {

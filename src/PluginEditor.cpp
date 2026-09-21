@@ -47,7 +47,7 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpKnob (velocity, "Velocity", *processor.velocityParam);
     setUpKnob (velocityVariation, "Velocity +/-", *processor.velocityVariationParam);
     setUpKnob (lowOctave, "Low octave", *processor.lowOctaveParam);
-    setUpKnob (highOctave, "High octave", *processor.highOctaveParam);
+    setUpKnob (octaves, "Octaves", *processor.octavesParam);
     setUpKnob (channel, "Channel", *processor.channelParam);
 
     // The value text ("Off", "4.5 beats", "Auto") and what is typed into the value box are handled by the
@@ -57,20 +57,6 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpKnob (euclidPulses, "Pulses", *processor.euclidPulsesParam);
     setUpKnob (euclidRotation, "Rotation", *processor.euclidRotationParam);
     setUpKnob (seed, "Seed", *processor.seedParam);
-
-    // The low octave cannot be dragged above the high one, nor the high one below the low one. This is only about what
-    // the user does here: when the host has set them the other way round they are left alone (the sound is the same,
-    // the range is low..high either way), and nothing here ever writes the other parameter.
-    lowOctave.slider.limit = [this] (double value)
-    {
-        const int low = processor.lowOctaveParam->get(), high = processor.highOctaveParam->get();
-        return low <= high ? juce::jmin (value, (double) high) : value;
-    };
-    highOctave.slider.limit = [this] (double value)
-    {
-        const int low = processor.lowOctaveParam->get(), high = processor.highOctaveParam->get();
-        return low <= high ? juce::jmax (value, (double) low) : value;
-    };
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
@@ -193,5 +179,5 @@ void SeqVerseEditor::resized()
 
     placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation, &channel });
     area.removeFromTop (kKnobRowGap);
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &euclidSteps, &euclidPulses, &euclidRotation, &cycleLength, &seed });
+    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &octaves, &euclidSteps, &euclidPulses, &euclidRotation, &cycleLength, &seed });
 }

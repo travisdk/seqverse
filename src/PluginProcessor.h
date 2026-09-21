@@ -19,8 +19,8 @@
 // number of steps, repeating freely on the step grid (or from the start of each cycle, when there is one). Only the
 // steps that are onsets of the pattern get their chance, and the arpeggio advances by one note per onset.
 //
-// No parameter is ever written in reaction to another one. Whatever the host sets, in any combination (a low octave
-// above the high one, more pulses than steps), processBlock uses the values it can make sense of.
+// No parameter is ever written in reaction to another one. Whatever the host sets, in any combination (an octave range
+// that reaches past the top, more pulses than steps), processBlock uses the values it can make sense of.
 class SeqVerseProcessor : public juce::AudioProcessor
 {
 public:
@@ -61,8 +61,8 @@ public:
     juce::AudioParameterChoice* noteLengthParam = nullptr;
     juce::AudioParameterInt* chanceParam = nullptr;            // percent
     juce::AudioParameterInt* swingParam = nullptr;             // percent, 100 is a full triplet swing
-    juce::AudioParameterInt* lowOctaveParam = nullptr;         // may be set above the high octave: the range is low..high either way
-    juce::AudioParameterInt* highOctaveParam = nullptr;
+    juce::AudioParameterInt* lowOctaveParam = nullptr;
+    juce::AudioParameterInt* octavesParam = nullptr;           // how many octaves from the low one, cut off at the top
     juce::AudioParameterInt* velocityParam = nullptr;
     juce::AudioParameterInt* velocityVariationParam = nullptr; // plus or minus
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16

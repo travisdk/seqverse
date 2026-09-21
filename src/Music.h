@@ -15,6 +15,11 @@ constexpr int kMinOctave = 0;
 constexpr int kMaxOctave = 7;
 constexpr int kDefaultOctave = 4;
 
+// The range of notes is `Octaves` octaves from the low octave, cut off at the top: no combination is invalid, and there
+// is no second octave parameter that could end up below the first.
+constexpr int kMaxOctaves = kMaxOctave - kMinOctave + 1;
+constexpr int kDefaultOctaves = 1;
+
 constexpr int noteNumber (int key, int octave, int interval) { return 12 * (octave + 1) + key + interval; }
 
 struct Scale
