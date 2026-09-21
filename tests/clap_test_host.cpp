@@ -12,8 +12,10 @@
 #include <clap/clap.h>
 
 #include "../src/Music.h"
+#include "../src/Take.h"
 
 #include <dlfcn.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +23,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
+#include <regex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -233,6 +239,28 @@ bool loadState (Instance& i, const std::vector<uint8_t>& blob)
     return state != nullptr && state->load (i.plugin, &stream);
 }
 
+// The plugin writes a finished take as a MIDI file in the folder SEQVERSE_TAKE_FOLDER names (main() points it at a
+// folder of its own, which does not exist until the plugin makes it).
+std::filesystem::path takeFolder;
+
+void clearTakes()
+{
+    std::error_code ignored;
+    for (const auto& entry : std::filesystem::directory_iterator (takeFolder, ignored))
+        std::filesystem::remove (entry.path(), ignored);
+}
+
+// The files that are named like a take, "SeqVerse ... .mid"
+std::vector<std::filesystem::path> takeFiles()
+{
+    std::vector<std::filesystem::path> files;
+    std::error_code ignored;
+    for (const auto& entry : std::filesystem::directory_iterator (takeFolder, ignored))
+        if (entry.path().extension() == ".mid" && entry.path().filename().string().rfind ("SeqVerse ", 0) == 0)
+            files.push_back (entry.path());
+    return files;
+}
+
 struct Scenario
 {
     std::vector<std::pair<const char*, const char*>> params; // by name and text, set before the first block
@@ -241,6 +269,11 @@ struct Scenario
     double startQuarters = 0.0;                               // transport position at sample 0
     uint32_t numBlocks = oneBar;
     uint32_t stopBlock = neverStop; // the transport stops from this block on
+    uint32_t restartBlock = neverStop; // after a stop, the transport plays again from this block (after a pause of a human's length)
+    uint32_t jumpBlock = neverStop;    // from this block on the transport is at jumpToQuarters + the time since, as after a loop
+    double jumpToQuarters = 0.0;
+    int tsigNumerator = 4;
+    int tsigDenominator = 4;
     bool playing = true;
     bool sendTransport = true;
     bool roundTripState = false; // set the parameters on one instance, save, and load into a fresh one
@@ -249,6 +282,8 @@ struct Scenario
     // The plugin includes the octave note by default. Most scenarios are about something else, and their expectations
     // are written for one octave of seven notes, so they run without it unless they ask for it (or set it themselves).
     bool octaveNote = false;
+
+    bool keepTakes = false; // the files of the earlier runs are left in the takes folder
 };
 
 // Runs a scenario on a fresh plugin instance and returns what the plugin emitted.
@@ -302,10 +337,17 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
     }
 
     received.clear();
+    if (! s.keepTakes)
+        clearTakes();
 
     for (uint32_t block = 0; block < s.numBlocks; ++block)
     {
         const uint32_t start = block * blockSize;
+
+        // A human takes longer than a test to press stop and then play, and the file of a take is written in the
+        // background a moment after the take is finished
+        if (block == s.restartBlock)
+            usleep (300 * 1000);
 
         blockEvents.clear();
         if (block == 0)
@@ -325,12 +367,14 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
         transport.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
         transport.header.type = CLAP_EVENT_TRANSPORT;
         transport.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
-        if (s.playing && block < s.stopBlock)
+        if (s.playing && (block < s.stopBlock || block >= s.restartBlock))
             transport.flags |= CLAP_TRANSPORT_IS_PLAYING;
         transport.tempo = 120.0;
-        transport.tsig_num = 4;
-        transport.tsig_denom = 4;
-        transport.song_pos_beats = (clap_beattime) std::llround ((s.startQuarters + (double) start / samplesPerQuarter) * CLAP_BEATTIME_FACTOR);
+        transport.tsig_num = (uint16_t) s.tsigNumerator;
+        transport.tsig_denom = (uint16_t) s.tsigDenominator;
+        const double quarters = block >= s.jumpBlock ? s.jumpToQuarters + (double) (block - s.jumpBlock) * blockSize / samplesPerQuarter
+                                                     : s.startQuarters + (double) start / samplesPerQuarter;
+        transport.song_pos_beats = (clap_beattime) std::llround (quarters * CLAP_BEATTIME_FACTOR);
 
         processBlock (inst, start, s.sendTransport ? &transport : nullptr);
     }
@@ -447,6 +491,177 @@ bool offsBeforeOnsAtSameSample (const std::vector<clap_event_midi_t>& events)
                 return false;
     return true;
 }
+// A take as it was read back from the MIDI file the plugin wrote
+struct FileNote
+{
+    int channel;
+    int note;
+    int velocity;
+    uint32_t on;
+    uint32_t off;
+};
+
+struct TakeFile
+{
+    int files = 0; // how many files there are (there should be one, or none)
+    std::string name;
+    int division = 0;
+    uint32_t endTick = 0;
+    uint32_t microsecondsPerQuarter = 0;
+    int tsigNumerator = 0;
+    int tsigDenominator = 0;
+    bool wellFormed = false;
+    std::vector<FileNote> notes; // in the order they start
+};
+
+TakeFile readTakeFile (const std::filesystem::path& path)
+{
+    TakeFile take;
+    take.files = 1;
+    take.name = path.filename().string();
+
+    std::ifstream in (path, std::ios::binary);
+    const std::vector<uint8_t> data ((std::istreambuf_iterator<char> (in)), std::istreambuf_iterator<char>());
+
+    size_t pos = 0;
+    const auto u16 = [&] { const uint32_t v = (uint32_t) data[pos] << 8 | data[pos + 1]; pos += 2; return v; };
+    const auto u32 = [&] { const uint32_t v = (uint32_t) u16() << 16; return v | u16(); };
+    const auto variable = [&]
+    {
+        uint32_t v = 0;
+        while (pos < data.size())
+        {
+            const uint8_t b = data[pos++];
+            v = v << 7 | (b & 0x7f);
+            if ((b & 0x80) == 0)
+                break;
+        }
+        return v;
+    };
+
+    if (data.size() < 22 || std::memcmp (data.data(), "MThd", 4) != 0)
+        return take;
+
+    pos = 4;
+    u32(); // the length of the header
+    const uint32_t format = u16();
+    const uint32_t tracks = u16();
+    take.division = (int) u16();
+    if (format > 1 || tracks != 1 || std::memcmp (data.data() + pos, "MTrk", 4) != 0)
+        return take;
+
+    pos += 4;
+    const size_t trackEnd = pos + 4 + u32(); // u32 reads the length, and the start of the track's data follows it
+    uint32_t tick = 0;
+    uint8_t running = 0;
+    std::vector<FileNote> open;
+
+    while (pos < trackEnd && pos < data.size())
+    {
+        tick += variable();
+        uint8_t status = data[pos];
+        if (status & 0x80)
+            ++pos;
+        else
+            status = running;
+
+        if (status == 0xff)
+        {
+            const uint8_t type = data[pos++];
+            const uint32_t length = variable();
+            if (type == 0x51 && length == 3)
+                take.microsecondsPerQuarter = (uint32_t) data[pos] << 16 | (uint32_t) data[pos + 1] << 8 | data[pos + 2];
+            if (type == 0x58 && length >= 2)
+            {
+                take.tsigNumerator = data[pos];
+                take.tsigDenominator = 1 << data[pos + 1];
+            }
+            pos += length;
+            if (type == 0x2f)
+            {
+                take.endTick = tick;
+                take.wellFormed = true;
+                break;
+            }
+            continue;
+        }
+
+        running = status;
+        const int kind = status & 0xf0;
+        const int channel = (status & 0x0f) + 1;
+        if (kind == 0xc0 || kind == 0xd0)
+        {
+            ++pos;
+            continue;
+        }
+
+        const uint8_t first = data[pos++];
+        const uint8_t second = data[pos++];
+        if (kind == 0x90 && second > 0)
+            open.push_back ({ channel, first, second, tick, 0 });
+
+        if (kind == 0x80 || (kind == 0x90 && second == 0))
+            for (auto it = open.begin(); it != open.end(); ++it)
+                if (it->channel == channel && it->note == first)
+                {
+                    it->off = tick;
+                    take.notes.push_back (*it);
+                    open.erase (it);
+                    break;
+                }
+    }
+
+    take.wellFormed &= open.empty(); // every note has an end
+    std::sort (take.notes.begin(), take.notes.end(), [] (const FileNote& a, const FileNote& b) { return a.on < b.on; });
+    return take;
+}
+
+// The one take file there is (files is 0 when there is none, and 2 or more when there are several: nothing is read then)
+TakeFile readTake()
+{
+    const auto files = takeFiles();
+    if (files.size() != 1)
+    {
+        TakeFile none;
+        none.files = (int) files.size();
+        return none;
+    }
+    return readTakeFile (files[0]);
+}
+
+// C major going up on the 1/8 grid: `count` notes starting with the arpeggio's `first`-th, the first at `firstTick` and
+// then every 480 ticks (a 1/8th at 960 per quarter), each lasting a 1/16th (240 ticks).
+std::vector<FileNote> takeGrid (int count, int first, uint32_t firstTick, int channel = 1, int velocity = 100)
+{
+    std::vector<FileNote> notes;
+    for (int i = 0; i < count; ++i)
+        notes.push_back ({ channel, 60 + cMajor[(first + i) % 7], velocity, firstTick + (uint32_t) i * 480, firstTick + (uint32_t) i * 480 + 240 });
+    return notes;
+}
+
+// The same notes, on the same ticks (give or take one) and with the same velocity and channel
+bool sameTakeNotes (const std::vector<FileNote>& got, const std::vector<FileNote>& want)
+{
+    const auto near = [] (uint32_t a, uint32_t b) { return a + 1 >= b && a <= b + 1; };
+    bool ok = got.size() == want.size();
+    for (size_t i = 0; ok && i < want.size(); ++i)
+        ok = got[i].note == want[i].note && got[i].channel == want[i].channel && got[i].velocity == want[i].velocity
+             && near (got[i].on, want[i].on) && near (got[i].off, want[i].off);
+
+    if (! ok)
+    {
+        std::printf ("    got %zu notes, wanted %zu. first ones (note on-off), got vs wanted:\n", got.size(), want.size());
+        for (size_t i = 0; i < std::max (got.size(), want.size()) && i < 10; ++i)
+        {
+            const auto text = [] (const std::vector<FileNote>& v, size_t n)
+            { return n < v.size() ? std::to_string (v[n].note) + " " + std::to_string (v[n].on) + "-" + std::to_string (v[n].off) : std::string ("-"); };
+            std::printf ("      %-18s %-18s\n", text (got, i).c_str(), text (want, i).c_str());
+        }
+    }
+    return ok;
+}
+
+bool endsAtTick (const TakeFile& take, uint32_t tick) { return take.endTick + 1 >= tick && take.endTick <= tick + 1; }
 } // namespace
 
 int main (int argc, char** argv)
@@ -456,6 +671,13 @@ int main (int argc, char** argv)
         std::fprintf (stderr, "usage: %s <plugin.clap>\n", argv[0]);
         return 2;
     }
+
+    // The plugin writes its takes in a folder of this test's own, so that the user's music folder is left alone. The folder
+    // is not made here: the plugin makes it when it writes the first take.
+    std::error_code ignored;
+    const auto tempRoot = std::filesystem::temp_directory_path (ignored) / ("seqverse_test_" + std::to_string (getpid()));
+    takeFolder = tempRoot / "takes";
+    setenv ("SEQVERSE_TAKE_FOLDER", takeFolder.c_str(), 1);
 
     void* lib = dlopen (argv[1], RTLD_NOW | RTLD_LOCAL);
     if (lib == nullptr)
@@ -513,6 +735,8 @@ int main (int argc, char** argv)
             { "Pattern Length", music::kMaxEuclidSteps - music::kMinEuclidSteps, false },
             { "Pulses", music::kMaxEuclidPulses, false },
             { "Rotation", music::kMaxEuclidRotation, false },
+            { "Record", 1, true },
+            { "Record Bars", take::kMaxBars, false },
         };
         for (const auto& expected : spans)
         {
@@ -1204,12 +1428,200 @@ int main (int argc, char** argv)
         check (sameNotes (notesOf (run (s), 0x90), cycledArp (11, 9)), "the cycle length comes back: 4.5 beats");
     }
 
+    std::printf ("recording a take\n");
+    {
+        // Two bars of 4/4 are eight beats, and the plugin plays a 1/8th every half beat: sixteen notes
+        Scenario s;
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "2" } };
+        s.numBlocks = 600; // longer than the two bars, which are 375 blocks
+        auto take = (run (s), readTake());
+        check (take.files == 1 && take.wellFormed, "one MIDI file was written, and it reads back");
+        check (take.division == 960 && take.microsecondsPerQuarter == 500000 && take.tsigNumerator == 4 && take.tsigDenominator == 4,
+               "960 ticks per quarter, 120 BPM and 4/4");
+        check (sameTakeNotes (take.notes, takeGrid (16, 0, 0)), "2 bars: the sixteen notes of the first two bars, as they were played");
+        check (endsAtTick (take, 7680), "and the clip ends after exactly two bars");
+
+        s.params = { { "Record Bars", "1" } };
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, takeGrid (8, 0, 0)) && endsAtTick (take, 3840), "1 bar: eight notes, ending after four beats");
+
+        // The transport stops after 100 blocks, 2.13 beats: five notes have started, and the fifth is ended by the stop
+        s.numBlocks = 300;
+        s.stopBlock = 100;
+        s.params = { { "Record Bars", "4" } };
+        take = (run (s), readTake());
+        auto want = takeGrid (5, 0, 0);
+        want[4].off = 2048;
+        check (sameTakeNotes (take.notes, want) && endsAtTick (take, 2048), "stopped after 2.1 beats of 4 bars: only what was played, the last note ended by the stop");
+
+        s.params = { { "Record Bars", "No limit" } };
+        s.numBlocks = 300;
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, want) && endsAtTick (take, 2048), "No limit: what was played until the stop");
+
+        s.params = { { "Record Bars", "No limit" } };
+        s.stopBlock = neverStop;
+        s.numBlocks = 400;
+        take = (run (s), readTake());
+        check (take.files == 0, "No limit and no stop: nothing is written until the transport stops");
+
+        // A loop: the transport jumps back after 100 blocks, and the take ends there
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "4" } };
+        s.numBlocks = 400;
+        s.jumpBlock = 100;
+        s.jumpToQuarters = 0.0;
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, want) && endsAtTick (take, 2048), "the transport jumps back after 2.1 beats: the take ends there and the loop is not added to it");
+
+        // Joining the song at beat 3: the take counts from where it began, and the arpeggio is where it would be (step 6)
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.startQuarters = 3.0;
+        s.numBlocks = 400;
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, takeGrid (8, 6, 0)) && endsAtTick (take, 3840), "started at beat 3 of the song: the take starts at 0, with the notes of that place");
+
+        // Not a whole number of bars from a step: the first step is at the play position plus a bit
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.startQuarters = 0.2;
+        s.numBlocks = 400;
+        take = (run (s), readTake());
+        want = takeGrid (8, 1, 288);
+        want[7].off = 3840; // it would have ended after the take
+        check (sameTakeNotes (take.notes, want) && endsAtTick (take, 3840),
+               "started 0.2 beats before a step: the first note is 0.3 beats into the take, and the last is ended with it");
+
+        // 3/4 has three quarters in a bar: two bars are six beats, or twelve notes
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "2" } };
+        s.tsigNumerator = 3;
+        s.numBlocks = 500; // 281 blocks are two bars of 3/4
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, takeGrid (12, 0, 0)) && endsAtTick (take, 5760) && take.tsigNumerator == 3 && take.tsigDenominator == 4,
+               "3/4: two bars are six beats, and the file says 3/4");
+
+        s.tsigNumerator = 6;
+        s.tsigDenominator = 8;
+        s.params = { { "Record Bars", "2" } };
+        take = (run (s), readTake());
+        check (endsAtTick (take, 5760) && take.tsigNumerator == 6 && take.tsigDenominator == 8, "6/8 is three quarters to the bar too");
+
+        // The notes are kept as they were played: channel and velocity
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" }, { "Channel", "3" }, { "Velocity", "77" } };
+        s.numBlocks = 300;
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, takeGrid (8, 0, 0, 3, 77)), "channel 3 and velocity 77 are in the file");
+
+        // Swing and a Euclidean rhythm are as played: 3 pulses in 8 steps are steps 0, 3 and 6, and the odd step 3 is
+        // swung 50 % of a third of a step (80 ticks) late
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" }, { "Swing", "50" }, { "Rhythm", "Euclidean" }, { "Pulses", "3" } };
+        s.numBlocks = 300;
+        take = (run (s), readTake());
+        check (sameTakeNotes (take.notes, { { 1, 60, 100, 0, 240 }, { 1, 62, 100, 1520, 1760 }, { 1, 64, 100, 2880, 3120 } }),
+               "a Euclidean rhythm and swing come out in the file as they were played");
+
+        // Nothing is recorded when it is not armed, when nothing plays, or when the transport is stopped
+        s = Scenario();
+        s.params = { { "Record Bars", "2" } };
+        check ((run (s), readTake()).files == 0, "Record off: no file");
+
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "2" }, { "Chance", "0" } };
+        check ((run (s), readTake()).files == 0, "a take with no notes is not kept");
+
+        s.params = { { "Record Bars", "2" } };
+        s.playing = false;
+        check ((run (s), readTake()).files == 0, "a stopped transport records nothing");
+
+        s.playing = true;
+        s.sendTransport = false;
+        check ((run (s), readTake()).files == 0, "and neither does a host that sends no transport");
+
+        // A second take replaces the first: the file of the first is deleted, so that only one is left
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.stopBlock = 100;
+        s.restartBlock = 200; // at 4.27 beats, so the first step of the second take is step 9 at 4.5
+        s.numBlocks = 500;
+        run (s);
+        const auto both = takeFiles();
+        bool firstKept = false, secondKept = false;
+        for (const auto& file : both)
+        {
+            const auto t = readTakeFile (file);
+            firstKept |= t.notes.size() == 5 && endsAtTick (t, 2048);
+            secondKept |= t.notes.size() == 8 && sameTakeNotes (t.notes, takeGrid (8, 9, 224)) && endsAtTick (t, 3840);
+        }
+        check (both.size() == 2 && firstKept && secondKept, "started again after a stop: both takes are files, the second from its own first beat");
+
+        // The name says when, and what was played
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "1" } };
+        s.numBlocks = 300;
+        take = (run (s), readTake());
+        const std::regex plain ("SeqVerse [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2} - C Major \\(Ionian\\) - Up - 1-8 - 1 bar\\.mid");
+        check (std::regex_match (take.name, plain), "the name: the date and time, then key, scale, direction, step rate and length");
+
+        s.numBlocks = 500; // two bars are 375 blocks
+        s.params = { { "Record Bars", "2" }, { "Key", "F#/Gb" }, { "Scale", "Dorian" }, { "Play Mode", "Random" }, { "Step Rate", "1/16T" },
+                     { "Rhythm", "Euclidean" }, { "Pulses", "5" }, { "Pattern Length", "12" } };
+        take = (run (s), readTake());
+        check (take.name.find (" - F# Dorian - Random - 1-16T - Euclid 5 in 12 - 2 bars.mid") != std::string::npos && take.name.find ('/') == std::string::npos,
+               "another take: F#, Dorian, Random, triplets, Euclid 5 in 12, 2 bars, and no slash in the name");
+
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.params = { { "Record Bars", "4" }, { "Arp Direction", "Up/Down" } };
+        s.numBlocks = 300;
+        s.stopBlock = 100;
+        take = (run (s), readTake());
+        check (take.name.find (" - Up-Down - 1-8 - 0.5 bars.mid") != std::string::npos, "a take that was stopped early says how long it was: 0.5 bars");
+
+        // Only the newest five are kept, the others of the same kind are deleted, and other files are not touched
+        s = Scenario();
+        s.rawParams = { { "Record", 1 } };
+        s.numBlocks = 1400;
+        clearTakes();
+        std::filesystem::create_directories (takeFolder);
+        { std::ofstream decoy (takeFolder / "My riff.mid"); decoy << "not a take"; }
+        s.keepTakes = true;
+        std::string bars[7] = { "1", "2", "3", "4", "5", "6", "7" };
+        for (int i = 0; i < 7; ++i)
+        {
+            s.params = { { "Record Bars", bars[i].c_str() } };
+            run (s);
+            usleep (20 * 1000); // the files are told apart by the time they were written
+        }
+        const auto kept = takeFiles();
+        std::vector<uint32_t> ends;
+        for (const auto& file : kept)
+            ends.push_back (readTakeFile (file).endTick);
+        std::sort (ends.begin(), ends.end());
+        check (kept.size() == 5 && ends == std::vector<uint32_t> { 3 * 3840, 4 * 3840, 5 * 3840, 6 * 3840, 7 * 3840 },
+               "after seven takes the five newest are left: the takes of 3 to 7 bars");
+        check (std::filesystem::exists (takeFolder / "My riff.mid"), "a file that is not named like a take is left alone");
+    }
+
     std::printf ("all blocks\n");
     check (everyBlockOk, "process() never returned an error");
     check (everyBlockSilent, "the audio output was always silent");
 
     entry->deinit();
     dlclose (lib);
+    std::filesystem::remove_all (tempRoot, ignored);
 
     std::printf ("%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;

@@ -1,9 +1,12 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <atomic>
+#include <memory>
 #include <vector>
 
 #include "Music.h"
+#include "Take.h"
 
 // Generates MIDI notes while the host transport is playing. Incoming MIDI is ignored.
 //
@@ -18,6 +21,11 @@
 // The rhythm is either "every step" (each step has its chance), or a Euclidean pattern: pulses spread evenly over a
 // number of steps, repeating freely on the step grid (or from the start of each cycle, when there is one). Only the
 // steps that are onsets of the pattern get their chance, and the arpeggio advances by one note per onset.
+//
+// With Record armed, the notes that leave the plugin are kept from the moment the host starts playing until the chosen
+// number of bars are done, or the transport stops, jumps, or Record is disarmed, whichever comes first. A background
+// thread then writes the take as a MIDI file in the takes folder (the newest few are kept), and the editor offers it to
+// be dragged into the host, or its folder to be opened. Recording only listens to what is played: it never changes it.
 //
 // No parameter is ever written in reaction to another one. Whatever the host sets, in any combination (an octave range
 // that reaches past the top, more pulses than steps), processBlock uses the values it can make sense of.
@@ -73,6 +81,25 @@ public:
     juce::AudioParameterInt* euclidStepsParam = nullptr;       // Euclidean rhythm: the pattern's length
     juce::AudioParameterInt* euclidPulsesParam = nullptr;      // ... its onsets (all steps play if there are more than steps)
     juce::AudioParameterInt* euclidRotationParam = nullptr;    // ... and how many steps it is moved later
+    juce::AudioParameterBool* recordParam = nullptr;           // the next start of the transport records a take
+    juce::AudioParameterInt* recordBarsParam = nullptr;        // how many bars of it, 0 is until the transport stops
+
+    // The last take that was written out as a file, for the editor (message thread)
+    struct TakeInfo
+    {
+        juce::File file;
+        int notes = 0;
+        double beats = 0.0;
+        double beatsPerBar = 4.0;
+    };
+
+    // Where the takes are written: a folder called SeqVerse in the user's music folder, or the one in the environment
+    // variable SEQVERSE_TAKE_FOLDER (the tests use it, so that they leave the music folder alone)
+    static juce::File getTakeFolder();
+
+    TakeInfo getLastTake() const;
+    bool isRecording() const { return takeState.load() == take::recording; }
+    int getTakeCount() const { return takeCount.load(); } // goes up with each take that is written
 
 private:
     struct PendingNoteOff
@@ -90,6 +117,25 @@ private:
         int position; // samples from the start of the current block
     };
 
+    // What one block is like, for the recording
+    struct BlockInfo
+    {
+        bool playing = false;
+        bool justStarted = false;
+        double startQuarters = 0.0;
+        double samplesPerQuarter = 1.0;
+        int numSamples = 0;
+        double bpm = 120.0;
+        int tsigNumerator = 4;
+        int tsigDenominator = 4;
+    };
+
+    class TakeWriter;
+
+    void updateTake (const juce::MidiBuffer& generated, const BlockInfo&);
+    void finishTake (double endBeats);
+    void writeTake();
+
     double sampleRate = 44100.0;
     double internalPpq = 0.0; // only used when the host does not report its PPQ position
     bool wasPlaying = false;
@@ -104,6 +150,18 @@ private:
 
     std::vector<PendingNoteOff> pendingNoteOffs;
     std::vector<NewNote> newNotes;
+
+    // The recording. `recording` and `takeEnd` belong to the audio thread. `current` is written by it while the state is
+    // `recording` and read by the writer while it is `finished`, never both.
+    take::Take current;
+    bool recording = false;
+    double takeEnd = 0.0; // beats from the start of the take to the end of the last block
+    std::atomic<int> takeState { take::idle };
+    std::atomic<int> takeCount { 0 };
+    std::unique_ptr<TakeWriter> takeWriter;
+
+    mutable juce::CriticalSection lastTakeLock; // the writer and the editor only, never the audio thread
+    TakeInfo lastTake;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseProcessor)
 };

@@ -85,7 +85,8 @@ target_sources(SeqVerseUiTest PRIVATE
 target_compile_definitions(SeqVerseUiTest PRIVATE
     JucePlugin_Name="SeqVerse"
     JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0)
+    JUCE_USE_CURL=0
+    JUCE_MODAL_LOOPS_PERMITTED=1) # the test runs the message loop for a while, so that the editor's timer fires
 
 target_link_libraries(SeqVerseUiTest
     PRIVATE

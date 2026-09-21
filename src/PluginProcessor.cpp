@@ -2,7 +2,9 @@
 #include "Music.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 namespace
 {
@@ -43,9 +45,65 @@ int cycleLengthFromText (const juce::String& text)
     return juce::jlimit (0, music::kMaxCycleHalfBeats, juce::roundToInt (trimmed.getDoubleValue() * 2.0));
 }
 
+constexpr double kTakeEdge = 0.001;       // beats: a note this close to the end of a take is the next bar's
+constexpr double kTakeContinuity = 0.05;  // beats: the transport has jumped if a block starts further from the last one's end
+
+juce::String barsText (int bars)
+{
+    return bars <= 0 ? juce::String ("No limit") : juce::String (bars) + (bars == 1 ? " bar" : " bars");
+}
+
+// A file name has no slashes: "C#/Db" is C#, and "1/8" is 1-8
+juce::String forFileName (const juce::String& text)
+{
+    return text.replaceCharacters ("/\\:*?\"<>|", "---------").trim();
+}
+
+// "SeqVerse 2026-09-21 19-30-12 - C# Major (Ionian) - Up - 1-8 - 4 bars.mid": the time first, so that the files sort by it,
+// then what was played
+juce::String takeFileName (const take::Take& take)
+{
+    const auto& d = take.description;
+    const auto key = juce::String (music::keyNames[d.key]).upToFirstOccurrenceOf ("/", false, false);
+
+    juce::StringArray parts;
+    parts.add (key + " " + music::scales[d.scale].name);
+    parts.add (d.playMode == music::arpeggio ? forFileName (music::arpDirectionNames[d.arpDirection]) : juce::String ("Random"));
+    parts.add (forFileName (music::stepRateNames[d.stepRate]));
+    if (d.rhythm == music::euclidean)
+        parts.add ("Euclid " + juce::String (d.pulses) + " in " + juce::String (d.patternLength));
+
+    const int tenthsOfBars = juce::roundToInt (take.endBeats / take::beatsPerBar (take.tsigNumerator, take.tsigDenominator) * 10.0);
+    parts.add ((tenthsOfBars % 10 == 0 ? juce::String (tenthsOfBars / 10) : juce::String (tenthsOfBars / 10.0, 1))
+               + (tenthsOfBars == 10 ? " bar" : " bars"));
+
+    return "SeqVerse " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + " - " + parts.joinIntoString (" - ") + ".mid";
+}
+
 const char* const stateTag = "SeqVerse";
 constexpr int stateVersion = 2; // 1: parameters as fractions of their range, 2: as their values
 }
+
+// Writes a finished take out as a file, a moment after the audio thread has finished it
+class SeqVerseProcessor::TakeWriter : public juce::Thread
+{
+public:
+    explicit TakeWriter (SeqVerseProcessor& p) : juce::Thread ("SeqVerse take writer"), owner (p) {}
+
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            if (owner.takeState.load (std::memory_order_acquire) == take::finished)
+                owner.writeTake();
+
+            wait (50);
+        }
+    }
+
+private:
+    SeqVerseProcessor& owner;
+};
 
 SeqVerseProcessor::SeqVerseProcessor()
     // A silent stereo output. Some hosts (Bitwig) do not run a plugin that has no audio ports.
@@ -86,15 +144,33 @@ SeqVerseProcessor::SeqVerseProcessor()
     addParameter (euclidStepsParam = new Int ({ "euclidSteps", 1 }, "Pattern Length", music::kMinEuclidSteps, music::kMaxEuclidSteps, music::kDefaultEuclidSteps));
     addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Pulses", 0, music::kMaxEuclidPulses, music::kDefaultEuclidPulses));
     addParameter (euclidRotationParam = new Int ({ "euclidRotation", 1 }, "Rotation", 0, music::kMaxEuclidRotation, 0));
+    addParameter (recordParam = new juce::AudioParameterBool ({ "record", 1 }, "Record", false));
+    addParameter (recordBarsParam = new Int ({ "recordBars", 1 }, "Record Bars", 0, take::kMaxBars, 4,
+                                             juce::AudioParameterIntAttributes()
+                                                 .withStringFromValueFunction ([] (int bars, int) { return barsText (bars); })
+                                                 .withValueFromStringFunction ([] (const juce::String& text)
+                                                                               { return text.trim().startsWithIgnoreCase ("no") ? 0 : text.getIntValue(); })));
+
+    takeWriter = std::make_unique<TakeWriter> (*this);
+    takeWriter->startThread();
 }
 
-SeqVerseProcessor::~SeqVerseProcessor() = default;
+SeqVerseProcessor::~SeqVerseProcessor()
+{
+    takeWriter->stopThread (2000);
+
+    if (takeState.load() == take::finished) // a take that was finished just before, so that it is not lost
+        writeTake();
+}
 
 void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
 {
     sampleRate = newSampleRate;
     internalPpq = 0.0;
     wasPlaying = false;
+    recording = false;
+    if (takeState.load() == take::recording)
+        takeState.store (take::idle);
     pendingNoteOffs.clear();
     pendingNoteOffs.reserve (256);
     newNotes.reserve (256);
@@ -125,6 +201,10 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         pendingNoteOffs.clear();
         internalPpq = 0.0;
         wasPlaying = false;
+
+        BlockInfo stopped;
+        stopped.numSamples = numSamples;
+        updateTake (midi, stopped);
         return;
     }
 
@@ -286,6 +366,181 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     for (const auto& newNote : newNotes)
         midi.addEvent (juce::MidiMessage::noteOn (newNote.channel, newNote.note, (juce::uint8) newNote.velocity), newNote.position);
+
+    BlockInfo block;
+    block.playing = true;
+    block.justStarted = justStarted;
+    block.startQuarters = startQuarters;
+    block.samplesPerQuarter = samplesPerQuarter;
+    block.numSamples = numSamples;
+    block.bpm = bpm;
+    if (const auto signature = position->getTimeSignature())
+    {
+        block.tsigNumerator = juce::jmax (1, signature->numerator);
+        block.tsigDenominator = juce::jmax (1, signature->denominator);
+    }
+    updateTake (midi, block);
+}
+
+// Listens to what has been generated in this block (`generated` holds nothing else). A take begins when the transport
+// starts while Record is armed, and its times are beats from that moment, so they do not depend on where in the song it
+// began.
+void SeqVerseProcessor::updateTake (const juce::MidiBuffer& generated, const BlockInfo& block)
+{
+    // The last take is still being written out, and the writer owns the data
+    if (takeState.load (std::memory_order_acquire) == take::finished)
+        return;
+
+    const bool armed = recordParam->get();
+
+    if (! recording)
+    {
+        if (! (armed && block.playing && block.justStarted))
+            return;
+
+        const double barBeats = take::beatsPerBar (block.tsigNumerator, block.tsigDenominator);
+        current.begin (block.startQuarters, block.bpm, block.tsigNumerator, block.tsigDenominator, recordBarsParam->get() * barBeats);
+        current.description = { keyParam->getIndex(), scaleParam->getIndex(), playModeParam->getIndex(), arpDirectionParam->getIndex(),
+                                stepRateParam->getIndex(), rhythmParam->getIndex(), euclidPulsesParam->get(), euclidStepsParam->get() };
+        takeEnd = 0.0;
+        recording = true;
+        takeState.store (take::recording, std::memory_order_release);
+    }
+
+    // A block that does not follow on from the last one: the transport jumped (a loop, say), or Record was disarmed
+    const double blockStart = block.playing ? block.startQuarters - current.startQuarters : takeEnd;
+    if (block.playing && (! armed || std::abs (blockStart - takeEnd) > kTakeContinuity))
+    {
+        finishTake (takeEnd);
+        return;
+    }
+
+    const double blockEnd = block.playing ? blockStart + block.numSamples / block.samplesPerQuarter : takeEnd;
+    const double limit = current.limitBeats;
+
+    // A stopped block holds the note-offs that end what still sounds, at the moment the transport stopped
+    for (const auto event : generated)
+    {
+        const auto status = event.data[0];
+        if (event.numBytes < 3 || ((status & 0xf0) != 0x90 && (status & 0xf0) != 0x80))
+            continue;
+
+        const double at = juce::jmax (0.0, block.playing ? blockStart + event.samplePosition / block.samplesPerQuarter : blockStart);
+
+        // What is at or after the end is left out, and the notes that are still sounding then are ended there
+        if (limit > 0.0 && at >= limit - kTakeEdge)
+            continue;
+
+        if (! current.add (at, status, event.data[1], event.data[2]))
+        {
+            finishTake (blockEnd);
+            return;
+        }
+    }
+
+    if (! block.playing)
+        finishTake (takeEnd);
+    else if (limit > 0.0 && blockEnd >= limit - kTakeEdge)
+        finishTake (limit);
+    else
+        takeEnd = blockEnd;
+}
+
+// A take without a note is not kept, so that a stray press of play does not replace a good one
+void SeqVerseProcessor::finishTake (double endBeats)
+{
+    current.endBeats = endBeats;
+    recording = false;
+    takeState.store (current.noteOns > 0 ? take::finished : take::idle, std::memory_order_release);
+}
+
+juce::File SeqVerseProcessor::getTakeFolder()
+{
+    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("SEQVERSE_TAKE_FOLDER", {});
+    if (fromEnvironment.isNotEmpty())
+        return juce::File (fromEnvironment);
+
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("SeqVerse");
+}
+
+SeqVerseProcessor::TakeInfo SeqVerseProcessor::getLastTake() const
+{
+    const juce::ScopedLock lock (lastTakeLock);
+    return lastTake;
+}
+
+// On the writer's thread (or the destructor's): `current` is finished and untouched by the audio thread until the state
+// is set to idle again
+void SeqVerseProcessor::writeTake()
+{
+    const auto ticks = [] (double beats) { return beats * take::kTicksPerQuarter; };
+
+    juce::MidiMessageSequence sequence;
+    sequence.addEvent (juce::MidiMessage::tempoMetaEvent (juce::roundToInt (60.0e6 / current.bpm)));
+    sequence.addEvent (juce::MidiMessage::timeSignatureMetaEvent (current.tsigNumerator, current.tsigDenominator));
+
+    bool sounding[16][128] = {};
+    for (int i = 0; i < current.count; ++i)
+    {
+        const auto& event = current.events[(size_t) i];
+        const bool on = (event.status & 0xf0) == 0x90;
+        sounding[event.status & 0x0f][event.note & 0x7f] = on;
+
+        sequence.addEvent (on ? juce::MidiMessage::noteOn ((event.status & 0x0f) + 1, event.note, event.velocity)
+                                    .withTimeStamp (ticks (event.beats))
+                              : juce::MidiMessage::noteOff ((event.status & 0x0f) + 1, event.note).withTimeStamp (ticks (event.beats)));
+    }
+
+    // What still sounds at the end is ended there, and the track ends there too, so the clip is as long as the take
+    for (int channel = 0; channel < 16; ++channel)
+        for (int note = 0; note < 128; ++note)
+            if (sounding[channel][note])
+                sequence.addEvent (juce::MidiMessage::noteOff (channel + 1, note).withTimeStamp (ticks (current.endBeats)));
+
+    sequence.addEvent (juce::MidiMessage::endOfTrack().withTimeStamp (ticks (current.endBeats)));
+
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote (take::kTicksPerQuarter);
+    midiFile.addTrack (sequence);
+
+    const auto folder = getTakeFolder();
+    const auto file = folder.getChildFile (takeFileName (current)).getNonexistentSibling();
+
+    bool written = false;
+    if (folder.createDirectory().wasOk())
+        if (juce::FileOutputStream stream (file); stream.openedOk())
+        {
+            stream.setPosition (0);
+            stream.truncate();
+            written = midiFile.writeTo (stream);
+        }
+
+    if (written)
+    {
+        {
+            const juce::ScopedLock lock (lastTakeLock);
+            lastTake = { file, current.noteOns, current.endBeats, take::beatsPerBar (current.tsigNumerator, current.tsigDenominator) };
+        }
+
+        // The newest few takes are kept: of the files in the folder named like a take, the older ones are deleted. A file
+        // that has been renamed or moved out is safe.
+        struct Written { std::filesystem::file_time_type time; juce::File file; };
+        std::vector<Written> takes; // the modification time of juce::File is only exact to the second
+        for (const auto& candidate : folder.findChildFiles (juce::File::findFiles, false, "SeqVerse *.mid"))
+        {
+            std::error_code ignored;
+            takes.push_back ({ std::filesystem::last_write_time (candidate.getFullPathName().toStdString(), ignored), candidate });
+        }
+
+        std::sort (takes.begin(), takes.end(), [] (const Written& a, const Written& b) { return a.time > b.time; });
+        for (size_t i = (size_t) take::kTakesKept; i < takes.size(); ++i)
+            if (takes[i].file != file)
+                takes[i].file.deleteFile();
+
+        ++takeCount;
+    }
+
+    takeState.store (take::idle, std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* SeqVerseProcessor::createEditor()

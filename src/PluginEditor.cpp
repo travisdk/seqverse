@@ -15,8 +15,38 @@ constexpr int kLabelWidth = 88;
 constexpr int kValueWidth = 64;      // the value box of a slider, wide enough for "4.5 beats"
 constexpr int kHeadingHeight = 26;
 
-// The margins, the title, the heading and the rows
-constexpr int kHeight = kMargin + 44 + kHeadingHeight + 4 + kRowsPerColumn * kRowHeight + kMargin;
+constexpr int kRecordRowHeight = 56;  // the page that is dragged out is 44 by 56
+constexpr int kIconWidth = 44;
+constexpr int kRecordButtonWidth = 96;
+constexpr int kOpenFolderWidth = 104;
+
+// The margins, the title, the three columns of rows, and the record band
+constexpr int kHeight = kMargin + 44 + kHeadingHeight + 4 + kRowsPerColumn * kRowHeight
+                        + kHeadingHeight + 4 + kRecordRowHeight + kMargin;
+}
+
+void TakeIcon::setFile (const juce::File& newFile)
+{
+    file = newFile;
+    setEnabled (file.existsAsFile());
+    setMouseCursor (isEnabled() ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void TakeIcon::paint (juce::Graphics& g)
+{
+    if (auto* look = dynamic_cast<DarkLookAndFeel*> (&getLookAndFeel()))
+        look->drawDocumentIcon (g, getLocalBounds().toFloat(), "MIDI", isEnabled(), isMouseOver());
+}
+
+// The drag is the operating system's: the host takes the file as it takes one from a file manager
+void TakeIcon::mouseDrag (const juce::MouseEvent& event)
+{
+    if (! dragStarted && isEnabled() && event.getDistanceFromDragStart() > 4 && file.existsAsFile())
+    {
+        dragStarted = true;
+        juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, this);
+    }
 }
 
 SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
@@ -60,13 +90,34 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpRow (channel, "Channel", *processor.channelParam);
     setUpRow (seed, "Seed", *processor.seedParam);
 
+    record.button.setButtonText ("Record");
+    record.button.setComponentID (processor.recordParam->getParameterID());
+    record.button.setClickingTogglesState (true); // the attachment does not do it, and a click would set the parameter back
+    record.attachment = std::make_unique<juce::ButtonParameterAttachment> (*processor.recordParam, record.button);
+    addAndMakeVisible (record.button);
+    setUpRow (recordBars, "Bars", *processor.recordBarsParam);
+
+    takeStatus.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (takeStatus);
+    takeIcon.setComponentID ("takeIcon");
+    addAndMakeVisible (takeIcon);
+
+    // Dragging the page out does not work in every host (Bitwig on Linux does not take it), and a file manager does
+    openFolder.setButtonText ("Open folder");
+    openFolder.setComponentID ("openFolder");
+    openFolder.onClick = [] { SeqVerseProcessor::getTakeFolder().revealToUser(); };
+    addAndMakeVisible (openFolder);
+
     // The attachments notify these on host changes (automation) as well as on changes made here
+    record.button.onClick = [this] { updateEnabledControls(); showTake(); };
     playMode.box.onChange = [this] { updateEnabledControls(); };
     rhythm.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
     lengthVariation.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
+    showTake();
+    startTimerHz (10); // the take is written a moment after it ends, and the recording state changes with the host
 
     // The value boxes of the sliders were made before the sliders were children of the editor, so they did not know
     // about its look yet. This makes every control take it.
@@ -98,6 +149,42 @@ void SeqVerseEditor::updateEnabledControls()
     const bool anythingRandom = ! arpeggio || processor.chanceParam->get() < 100 || processor.velocityVariationParam->get() > 0
                                 || processor.lengthVariationParam->get() > 0;
     setEnabled (seed, anythingRandom);
+
+    // The number of bars only matters when recording
+    setEnabled (recordBars, processor.recordParam->get());
+}
+
+// What the recording is doing, and the last take as a page to drag
+void SeqVerseEditor::showTake()
+{
+    const auto take = processor.getLastTake();
+    takeIcon.setFile (take.file);
+    openFolder.setEnabled (SeqVerseProcessor::getTakeFolder().isDirectory()); // there is one once a take has been written
+
+    juce::String text;
+    if (processor.isRecording())
+        text = "Recording...";
+    else if (take.file != juce::File())
+    {
+        const int tenthsOfBars = juce::roundToInt (take.beats / take.beatsPerBar * 10.0);
+        text = "Last take: " + juce::String (take.notes) + (take.notes == 1 ? " note, " : " notes, ")
+               + (tenthsOfBars % 10 == 0 ? juce::String (tenthsOfBars / 10) : juce::String (tenthsOfBars / 10.0, 1))
+               + (tenthsOfBars == 10 ? " bar" : " bars") + ".";
+    }
+    else if (processor.recordParam->get())
+        text = "Armed. It records when the host starts playing.";
+    else
+        text = "Arm Record, then start the host.";
+
+    takeStatus.setText (text, juce::dontSendNotification);
+    shownTakeCount = processor.getTakeCount();
+    shownRecording = processor.isRecording();
+}
+
+void SeqVerseEditor::timerCallback()
+{
+    if (processor.getTakeCount() != shownTakeCount || processor.isRecording() != shownRecording)
+        showTake();
 }
 
 void SeqVerseEditor::setEnabled (Selector& selector, bool enabled)
@@ -164,11 +251,12 @@ void SeqVerseEditor::resized()
     headings.clear();
 
     // Three columns of seven rows, dropdowns and sliders, each with its name to the left
-    const int columnWidth = (area.getWidth() - (kColumns - 1) * kColumnGap) / kColumns;
+    auto columns = area.removeFromTop (kHeadingHeight + 4 + kRowsPerColumn * kRowHeight);
+    const int columnWidth = (columns.getWidth() - (kColumns - 1) * kColumnGap) / kColumns;
     const auto column = [&] (const juce::String& heading)
     {
-        auto cell = area.removeFromLeft (columnWidth);
-        area.removeFromLeft (kColumnGap);
+        auto cell = columns.removeFromLeft (columnWidth);
+        columns.removeFromLeft (kColumnGap);
         headings.push_back ({ heading, cell.removeFromTop (kHeadingHeight) });
         cell.removeFromTop (4);
         return cell;
@@ -209,6 +297,23 @@ void SeqVerseEditor::resized()
     placeRow (feelColumn, chance);
     placeRow (feelColumn, channel);
     placeRow (feelColumn, seed);
+
+    // Record: the button, the number of bars, the page with the last take, and what is happening
+    headings.push_back ({ "Record", area.removeFromTop (kHeadingHeight) });
+    area.removeFromTop (4);
+    auto band = area.removeFromTop (kRecordRowHeight);
+
+    record.button.setBounds (band.removeFromLeft (kRecordButtonWidth).withSizeKeepingCentre (kRecordButtonWidth, kControlHeight + 4));
+    band.removeFromLeft (kColumnGap);
+    auto barsCell = band.removeFromLeft (kLabelWidth + columnWidth - 40).withSizeKeepingCentre (kLabelWidth + columnWidth - 40, kControlHeight);
+    recordBars.label.setBounds (barsCell.removeFromLeft (kLabelWidth));
+    recordBars.slider.setBounds (barsCell);
+    band.removeFromLeft (kColumnGap);
+    takeIcon.setBounds (band.removeFromLeft (kIconWidth));
+    band.removeFromLeft (kColumnGap / 2);
+    openFolder.setBounds (band.removeFromRight (kOpenFolderWidth).withSizeKeepingCentre (kOpenFolderWidth, kControlHeight + 4));
+    band.removeFromRight (kColumnGap / 2);
+    takeStatus.setBounds (band);
 
     repaint(); // the headings have moved
 }

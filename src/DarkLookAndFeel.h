@@ -18,6 +18,7 @@ inline const juce::Colour text (0xffe6edf1);
 inline const juce::Colour dimText (0xffaab6bf);    // labels above the controls
 inline const juce::Colour accent (0xff3dd6c6);     // value arcs, highlights
 inline const juce::Colour onAccent (0xff101418);   // text on the accent colour
+inline const juce::Colour record (0xfff23a3a);     // the Record button when armed
 }
 
 class DarkLookAndFeel : public juce::LookAndFeel_V4
@@ -33,6 +34,11 @@ public:
         setColour (juce::Label::textColourId, theme::dimText);
 
         setColour (juce::ComboBox::arrowColourId, theme::accent);
+
+        setColour (juce::TextButton::buttonColourId, theme::surface);
+        setColour (juce::TextButton::buttonOnColourId, theme::record);
+        setColour (juce::TextButton::textColourOffId, theme::text);
+        setColour (juce::TextButton::textColourOnId, juce::Colours::white);
 
         setColour (juce::Slider::textBoxTextColourId, theme::text);
         setColour (juce::Slider::textBoxBackgroundColourId, theme::sunken);
@@ -83,6 +89,46 @@ public:
         const juce::Point<float> tip (centre.x + radius * std::sin (angle), centre.y - radius * std::cos (angle));
         g.setColour (juce::Colours::white.withAlpha (alpha));
         g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (tip));
+    }
+
+    // A sheet of paper with a folded corner and a few notes on it, with `label` at the bottom: the take that can be dragged
+    // into the host. Dimmed when there is nothing to drag.
+    void drawDocumentIcon (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& label, bool enabled, bool highlighted)
+    {
+        const float alpha = enabled ? 1.0f : 0.45f;
+        const auto page = area.reduced (3.0f);
+        const float fold = page.getWidth() * 0.32f;
+        const auto stroke = [] (float thickness)
+        { return juce::PathStrokeType (thickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded); };
+
+        juce::Path sheet;
+        sheet.startNewSubPath (page.getX(), page.getY());
+        sheet.lineTo (page.getRight() - fold, page.getY());
+        sheet.lineTo (page.getRight(), page.getY() + fold);
+        sheet.lineTo (page.getRight(), page.getBottom());
+        sheet.lineTo (page.getX(), page.getBottom());
+        sheet.closeSubPath();
+
+        g.setColour ((highlighted && enabled ? theme::outline : theme::surface).withAlpha (alpha));
+        g.fillPath (sheet);
+        g.setColour ((enabled ? theme::accent : theme::dimText).withAlpha (alpha));
+        g.strokePath (sheet, stroke (1.5f));
+
+        juce::Path corner;
+        corner.startNewSubPath (page.getRight() - fold, page.getY());
+        corner.lineTo (page.getRight() - fold, page.getY() + fold);
+        corner.lineTo (page.getRight(), page.getY() + fold);
+        g.strokePath (corner, stroke (1.0f));
+
+        // Notes, as in a piano roll
+        const float left = page.getX() + page.getWidth() * 0.18f;
+        const float unit = page.getWidth() * 0.64f;
+        const float rows[3][2] = { { 0.0f, 0.4f }, { 0.25f, 0.45f }, { 0.55f, 0.45f } }; // start and length, in units
+        for (int i = 0; i < 3; ++i)
+            g.fillRoundedRectangle (left + rows[i][0] * unit, page.getY() + page.getHeight() * (0.44f + 0.11f * (float) i), rows[i][1] * unit, 3.0f, 1.5f);
+
+        g.setFont (juce::Font (10.0f, juce::Font::bold));
+        g.drawText (label, page.withTrimmedTop (page.getHeight() * 0.78f), juce::Justification::centred);
     }
 
     int getSliderThumbRadius (juce::Slider&) override { return 6; }

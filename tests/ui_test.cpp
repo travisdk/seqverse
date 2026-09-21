@@ -8,6 +8,7 @@
 #include "../src/PluginEditor.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,24 @@ void check (bool ok, const std::string& what)
         ++failures;
 }
 
+// A host's transport that plays or does not, at a position given in quarter notes
+class FakeTransport : public juce::AudioPlayHead
+{
+public:
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo info;
+        info.setIsPlaying (playing);
+        info.setPpqPosition (quarters);
+        info.setBpm (120.0);
+        info.setTimeSignature (TimeSignature { 4, 4 });
+        return info;
+    }
+
+    bool playing = false;
+    double quarters = 0.0;
+};
+
 void saveSnapshot (juce::AudioProcessorEditor& editor, const std::string& path)
 {
     const auto image = editor.createComponentSnapshot (editor.getLocalBounds());
@@ -34,6 +53,11 @@ void saveSnapshot (juce::AudioProcessorEditor& editor, const std::string& path)
 
 int main (int argc, char** argv)
 {
+    // The plugin writes its takes in a folder of this test's own, so that the music folder of the user is left alone. The
+    // folder does not exist until the plugin has written a take.
+    const auto tempFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("seqverse_ui_test_" + juce::String (juce::Time::currentTimeMillis()));
+    setenv ("SEQVERSE_TAKE_FOLDER", tempFolder.getFullPathName().toRawUTF8(), 1);
+
     const juce::ScopedJuceInitialiser_GUI gui;
 
     SeqVerseProcessor processor;
@@ -153,12 +177,71 @@ int main (int argc, char** argv)
         snapshot ("cycle");
     }
 
+    std::printf ("record\n");
+    {
+        check (! enabled ("recordBars"), "the number of bars is disabled while Record is off");
+        check (enabled ("record"), "the Record button is enabled");
+        check (! enabled ("takeIcon") && ! enabled ("openFolder"), "there is no take yet, so the page cannot be dragged and there is no folder to open");
+        snapshot ("record_off");
+
+        // Clicked the way a user does, not set through the parameter: the button has to toggle
+        auto* recordButton = dynamic_cast<juce::Button*> (editor->findChildWithID ("record"));
+        check (recordButton != nullptr, "the Record button is a button");
+        const auto click = [&]
+        {
+            recordButton->triggerClick(); // it is delivered as a message
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+        };
+        if (recordButton != nullptr)
+            click();
+        check (processor.recordParam->get() && recordButton != nullptr && recordButton->getToggleState(), "clicking Record arms it, and the button shows it");
+        check (enabled ("recordBars"), "armed: the number of bars is enabled");
+        *processor.recordBarsParam = 2;
+        snapshot ("record_armed");
+
+        // Two beats of playing and then a stop, through the processor as a host would drive it
+        FakeTransport transport;
+        processor.setPlayHead (&transport);
+        processor.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> audio (2, 512);
+        juce::MidiBuffer midi;
+
+        transport.playing = true;
+        for (int block = 0; block < 100; ++block)
+        {
+            transport.quarters = block * 512.0 / 24000.0;
+            processor.processBlock (audio, midi);
+            if (block == 0)
+                check (processor.isRecording(), "the first block after the start begins the take");
+        }
+
+        transport.playing = false;
+        processor.processBlock (audio, midi);
+        check (! processor.isRecording(), "the stop ends the take");
+
+        // The file is written a moment later, and the editor's timer picks it up
+        for (int wait = 0; wait < 100 && processor.getTakeCount() == 0; ++wait)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+
+        const auto take = processor.getLastTake();
+        check (processor.getTakeCount() == 1 && take.file.existsAsFile() && take.notes == 5, "a file with the five notes was written");
+        check (enabled ("takeIcon") && enabled ("openFolder"), "the page can be dragged now, and the folder can be opened");
+        snapshot ("record_take");
+
+        processor.setPlayHead (nullptr);
+        if (recordButton != nullptr)
+            click();
+        check (! processor.recordParam->get() && ! enabled ("recordBars"), "clicking Record again disarms it, and the number of bars is disabled");
+    }
+
     std::printf ("every control has a parameter behind it\n");
     for (auto* parameter : processor.getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
             check (editor->findChildWithID (ranged->getParameterID()) != nullptr, ranged->getParameterID().toStdString());
 
     editor.reset();
+    tempFolder.deleteRecursively();
 
     std::printf ("%s\n", failures == 0 ? "PASS" : "FAILED");
     return failures == 0 ? 0 : 1;
