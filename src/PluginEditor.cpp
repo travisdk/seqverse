@@ -10,11 +10,11 @@ constexpr int kFooterHeight = 70;
 // Two rows of knobs, with space between them so that the value boxes of the first do not crowd the labels of the second
 constexpr int kKnobRowHeight = 160;
 constexpr int kKnobRowGap = 30;
-constexpr int kKnobsPerRow = 5;
+constexpr int kKnobsPerRow = 6;
 
-// Above the knobs: the margins, the title, and the two rows of selectors (196 pixels), then the footer without the
+// Above the knobs: the margins, the title, and the three rows of selectors (252 pixels), then the footer without the
 // margin that is already counted
-constexpr int kHeight = 196 + (kFooterHeight - 16) + 2 * kKnobRowHeight + kKnobRowGap;
+constexpr int kHeight = 252 + (kFooterHeight - 16) + 2 * kKnobRowHeight + kKnobRowGap;
 }
 
 SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
@@ -34,6 +34,7 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
     setUpSelector (octaveNote, "Octave note", *processor.octaveNoteParam);
+    setUpSelector (rhythm, "Rhythm", *processor.rhythmParam);
 
     setUpKnob (chance, "Chance", *processor.chanceParam);
     chance.slider.setTextValueSuffix (" %");
@@ -52,10 +53,13 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     // The value text ("Endless", "4.5 beats", "Auto") and what is typed into the value box are handled by the
     // parameters through the slider attachments, so the host shows the same text
     setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
+    setUpKnob (euclidPulses, "Pulses", *processor.euclidPulsesParam);
+    setUpKnob (euclidRotation, "Rotation", *processor.euclidRotationParam);
     setUpKnob (seed, "Seed", *processor.seedParam);
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     playMode.box.onChange = [this] { updateEnabledControls(); };
+    rhythm.box.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
     updateEnabledControls();
@@ -78,6 +82,11 @@ void SeqVerseEditor::updateEnabledControls()
 
     // Only the arpeggio walks the pool in a direction
     setEnabled (arpDirection, arpeggio);
+
+    // The pulses and their rotation are the Euclidean rhythm's. Its length is the cycle length, which is always in use.
+    const bool euclidean = processor.rhythmParam->getIndex() == music::euclidean;
+    setEnabled (euclidPulses, euclidean);
+    setEnabled (euclidRotation, euclidean);
 
     // The seed only matters where something is random: the notes of Random mode, a chance below 100 %, or a velocity
     // variation. An arpeggio at 100 % with a fixed velocity has nothing to seed.
@@ -149,10 +158,12 @@ void SeqVerseEditor::resized()
     placeSelectors (area.removeFromTop (46), { &key, &scale, &stepRate });
     area.removeFromTop (10);
     placeSelectors (area.removeFromTop (46), { &playMode, &arpDirection, &octaveNote });
+    area.removeFromTop (10);
+    placeSelectors (area.removeFromTop (46), { &rhythm });
     area.removeFromTop (14);
     area.removeFromBottom (kFooterHeight - 16); // the editor's 16 pixel margin is already taken off
 
-    // Knobs: a grid of five columns and two rows
+    // Knobs: a grid of six columns and two rows
     const auto placeKnobs = [] (juce::Rectangle<int> row, std::initializer_list<Knob*> knobs)
     {
         const int width = row.getWidth() / kKnobsPerRow;
@@ -164,7 +175,7 @@ void SeqVerseEditor::resized()
         }
     };
 
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation });
+    placeKnobs (area.removeFromTop (kKnobRowHeight), { &chance, &noteLength, &swing, &velocity, &velocityVariation, &channel });
     area.removeFromTop (kKnobRowGap);
-    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &channel, &cycleLength, &seed });
+    placeKnobs (area.removeFromTop (kKnobRowHeight), { &lowOctave, &highOctave, &cycleLength, &euclidPulses, &euclidRotation, &seed });
 }

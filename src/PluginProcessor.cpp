@@ -80,6 +80,11 @@ SeqVerseProcessor::SeqVerseProcessor()
                                            .withValueFromStringFunction ([] (const juce::String& text)
                                                                          { return text.trim().equalsIgnoreCase ("auto") ? 0 : text.getIntValue(); })));
 
+    // Added last, so that the parameters of sessions saved earlier keep their place
+    addParameter (rhythmParam = new Choice ({ "rhythm", 1 }, "Rhythm", namesOf (music::rhythmNames), music::everyStep));
+    addParameter (euclidPulsesParam = new Int ({ "euclidPulses", 1 }, "Pulses", 0, music::kMaxEuclidPulses, music::kDefaultEuclidPulses));
+    addParameter (euclidRotationParam = new Int ({ "euclidRotation", 1 }, "Rotation", 0, music::kMaxEuclidRotation, 0));
+
     lowOctaveParam->addListener (this);
     highOctaveParam->addListener (this);
 }
@@ -187,6 +192,16 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     lastCycleHalfBeats = cycleHalfBeats;
     const int cycleSeed = seed > 0 ? seed : autoSeed;
 
+    // A Euclidean pattern is as long as the cycle, in steps. Without a cycle it is one bar of four beats, which every
+    // step rate fits a whole number of times, so a bar always starts with the pattern (the notes still go on endlessly).
+    const bool euclidean = rhythmParam->getIndex() == music::euclidean;
+    if (euclidean)
+    {
+        const double patternQuarters = cycleHalfBeats == 0 ? 4.0 : cycleQuarters;
+        euclidPattern = music::EuclidPattern ((int) std::ceil (patternQuarters / stepQuarters - kBoundaryTolerance),
+                                              euclidPulsesParam->get(), euclidRotationParam->get());
+    }
+
     // Whatever the two octave parameters say, the range is low..high
     const int lowOctave = juce::jmin (lowOctaveParam->get(), highOctaveParam->get());
     const int highOctave = juce::jmax (lowOctaveParam->get(), highOctaveParam->get());
@@ -204,6 +219,16 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // `stepStart` (in quarters). `randomState` seeds its random numbers.
     const auto playStep = [&] (double stepStart, juce::int64 step, std::uint64_t randomState)
     {
+        // In a Euclidean rhythm only the onsets play, and the arpeggio counts them instead of the steps
+        auto arpStep = step;
+        if (euclidean)
+        {
+            if (! euclidPattern.isOnset (step))
+                return;
+
+            arpStep = euclidPattern.pulseNumber (step);
+        }
+
         // All the randomness of a step comes from one generator, so it does not depend on the other settings
         auto stepRandom = music::StepRandom { randomState };
         const int chanceDraw = stepRandom.nextInt (100);
@@ -213,7 +238,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         if (chanceDraw >= chancePercent)
             return;
 
-        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, step) : noteDraw;
+        const int poolIndex = arpeggiate ? music::arpIndex (direction, poolSize, arpStep) : noteDraw;
         const int note = poolIndex < scaleNotes ? music::noteNumber (key, lowOctave + poolIndex / scale.size, scale.intervals[poolIndex % scale.size])
                                                 : music::noteNumber (key, highOctave + 1, 0); // the root above the range
 

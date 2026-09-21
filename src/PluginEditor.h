@@ -42,9 +42,9 @@ private:
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
 
     juce::Label titleLabel;
-    Selector key, scale, stepRate, playMode, arpDirection, octaveNote;
+    Selector key, scale, stepRate, playMode, arpDirection, octaveNote, rhythm;
     Knob chance, noteLength, swing, velocity, velocityVariation;
-    Knob lowOctave, highOctave, channel, cycleLength, seed;
+    Knob lowOctave, highOctave, channel, cycleLength, euclidPulses, euclidRotation, seed;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };

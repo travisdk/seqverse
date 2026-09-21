@@ -4,6 +4,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
 
+#include "Music.h"
+
 // Generates MIDI notes while the host transport is playing. Incoming MIDI is ignored.
 //
 // The host timeline is divided into steps of the selected rate (locked to the host's PPQ position, so it follows
@@ -13,6 +15,10 @@
 //
 // With a cycle length, the step grid restarts every cycle (cycles start at multiples of the cycle length on the host
 // timeline) and everything about a step depends on its number within the cycle, so each cycle repeats the last one.
+//
+// The rhythm is either "every step" (each step has its chance), or a Euclidean pattern: pulses spread evenly over the
+// steps of a cycle, so the cycle length is also the length of the pattern (a bar, when the cycle is endless). Only the
+// steps that are onsets of the pattern get their chance, and the arpeggio advances by one note per onset.
 class SeqVerseProcessor : public juce::AudioProcessor,
                                 private juce::AudioProcessorParameter::Listener,
                                 private juce::AsyncUpdater
@@ -62,6 +68,9 @@ public:
     juce::AudioParameterInt* channelParam = nullptr;           // 1 to 16
     juce::AudioParameterInt* cycleLengthParam = nullptr;       // in half beats, 0 is endless
     juce::AudioParameterInt* seedParam = nullptr;              // 0 is a different sequence every time
+    juce::AudioParameterChoice* rhythmParam = nullptr;
+    juce::AudioParameterInt* euclidPulsesParam = nullptr;      // Euclidean rhythm: onsets in the pattern, never more than its steps
+    juce::AudioParameterInt* euclidRotationParam = nullptr;    // ... and how many steps it is moved later
 
 private:
     struct PendingNoteOff
@@ -96,6 +105,8 @@ private:
     int lastCycleHalfBeats = -1;
 
     std::atomic<int> lastChangedParameter { -1 }; // the index of the octave parameter that changed last
+
+    music::EuclidPattern euclidPattern { 1, 0, 0 }; // rebuilt in each block that uses it, so it needs no allocation
 
     std::vector<PendingNoteOff> pendingNoteOffs;
     std::vector<NewNote> newNotes;

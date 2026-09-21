@@ -55,7 +55,7 @@ int main (int argc, char** argv)
     };
 
     const char* const alwaysEnabled[] = { "key", "scale", "playMode", "octaveNote", "stepRate", "noteLength", "chance", "swing",
-                                          "lowOctave", "highOctave", "velocity", "velocityVariation", "channel", "cycleLength" };
+                                          "lowOctave", "highOctave", "velocity", "velocityVariation", "channel", "cycleLength", "rhythm" };
     const auto othersEnabled = [&]
     {
         bool ok = true;
@@ -67,6 +67,7 @@ int main (int argc, char** argv)
     std::printf ("arpeggio, 100 %%, no velocity variation (the defaults)\n");
     check (enabled ("arpDirection"), "arp direction is enabled");
     check (! enabled ("seed"), "the seed is disabled: nothing is random");
+    check (! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled");
     check (othersEnabled(), "all the other controls are enabled");
     snapshot ("arpeggio");
 
@@ -94,6 +95,22 @@ int main (int argc, char** argv)
     check (enabled ("seed"), "the seed is enabled: the velocities are random");
     *processor.velocityVariationParam = 0;
     check (! enabled ("seed"), "the seed is disabled again without variation");
+
+    std::printf ("euclidean rhythm\n");
+    *processor.rhythmParam = music::euclidean;
+    check (enabled ("euclidPulses") && enabled ("euclidRotation"), "the pulses and the rotation are enabled");
+    check (enabled ("arpDirection") && ! enabled ("seed"), "arp direction is enabled, and the seed is not: nothing is random at 100 %");
+    check (othersEnabled(), "all the other controls are enabled, the cycle length among them: it is the pattern's length");
+    *processor.chanceParam = 70;
+    check (enabled ("seed"), "the seed is enabled with a chance below 100 %");
+    *processor.chanceParam = 100;
+    *processor.euclidPulsesParam = 3;
+    *processor.cycleLengthParam = 6;
+    snapshot ("euclidean");
+    *processor.cycleLengthParam = 0;
+    *processor.euclidPulsesParam = music::kDefaultEuclidPulses;
+    *processor.rhythmParam = music::everyStep;
+    check (! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
 
     std::printf ("cycle length\n");
     {
