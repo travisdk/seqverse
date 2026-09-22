@@ -83,6 +83,7 @@ public:
     juce::AudioParameterInt* euclidRotationParam = nullptr;    // ... and how many steps it is moved later
     juce::AudioParameterBool* recordParam = nullptr;           // the next start of the transport records a take
     juce::AudioParameterInt* recordBarsParam = nullptr;        // how many bars of it, 0 is until the transport stops
+    juce::AudioParameterBool* midiRootParam = nullptr;         // a MIDI note in latches its pitch class as the root, instead of Key
 
     // The last take that was written out as a file, for the editor (message thread)
     struct TakeInfo
@@ -143,6 +144,12 @@ private:
     double internalPpq = 0.0; // only used when the host does not report its PPQ position
     bool wasPlaying = false;
     juce::Random random;
+
+    // The last note-on received while MIDI Root is on latches its pitch class as the root (-1 is none yet, so Key is
+    // used until the first note). Read from incoming MIDI on the audio thread only, whether or not the host is playing.
+    int latchedRootPitchClass = -1;
+
+    int currentKey() const { return midiRootParam->get() && latchedRootPitchClass >= 0 ? latchedRootPitchClass : keyParam->getIndex(); }
 
     // With a cycle and the seed on Auto, this is the seed of the phrase that repeats. It is rolled again each time the
     // transport starts and when the cycle length changes.

@@ -72,6 +72,17 @@ private:
     Selector noteLength;
     Setting lengthVariation, velocity, velocityVariation, chance, channel, seed;
 
+    // A checkbox with its name to the left, like a Setting but for a bool parameter: MIDI Root, the 8th row of Pitch
+    struct Toggle
+    {
+        juce::Label label;
+        juce::ToggleButton button;
+        std::unique_ptr<juce::ButtonParameterAttachment> attachment;
+    };
+    void setUpToggle (Toggle&, const juce::String& text, juce::AudioParameterBool&);
+
+    Toggle midiRoot;
+
     // Record: the button arms it, and the take that has been recorded is dragged from the page
     struct RecordButton
     {

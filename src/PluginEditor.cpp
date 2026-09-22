@@ -10,7 +10,7 @@ constexpr int kColumns = 3;
 
 constexpr int kControlHeight = 26;   // a dropdown or a slider
 constexpr int kRowHeight = 34;       // a control and the gap to the next row
-constexpr int kRowsPerColumn = 7;
+constexpr int kRowsPerColumn = 8; // Pitch has 8 (MIDI Root is the extra one), Rhythm and Feel leave the last row empty
 constexpr int kLabelWidth = 88;
 constexpr int kValueWidth = 64;      // the value box of a slider, wide enough for "4.5 beats"
 constexpr int kHeadingHeight = 26;
@@ -67,6 +67,8 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
     setUpRow (octaves, "Octaves", *processor.octavesParam);
     setUpSelector (playMode, "Play mode", *processor.playModeParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
+    setUpToggle (midiRoot, "MIDI Root", *processor.midiRootParam);
+    midiRoot.button.setTooltip ("The next MIDI note received sets the root note (in place of Key) until another one arrives.");
 
     setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
     setUpSelector (rhythm, "Rhythm", *processor.rhythmParam);
@@ -240,6 +242,18 @@ void SeqVerseEditor::setUpRow (Setting& row, const juce::String& text, juce::Ran
     row.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, row.slider);
 }
 
+void SeqVerseEditor::setUpToggle (Toggle& toggle, const juce::String& text, juce::AudioParameterBool& parameter)
+{
+    toggle.label.setText (text, juce::dontSendNotification);
+    toggle.label.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (toggle.label);
+
+    toggle.button.setComponentID (parameter.getParameterID());
+    addAndMakeVisible (toggle.button);
+
+    toggle.attachment = std::make_unique<juce::ButtonParameterAttachment> (parameter, toggle.button);
+}
+
 void SeqVerseEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
@@ -285,6 +299,7 @@ void SeqVerseEditor::resized()
     };
     const auto placeSelector = [&] (juce::Rectangle<int>& cell, Selector& selector) { place (cell, selector.label, selector.box); };
     const auto placeRow = [&] (juce::Rectangle<int>& cell, Setting& setting) { place (cell, setting.label, setting.slider); };
+    const auto placeToggle = [&] (juce::Rectangle<int>& cell, Toggle& toggle) { place (cell, toggle.label, toggle.button); };
 
     auto pitchColumn = column ("Pitch");
     placeSelector (pitchColumn, key);
@@ -294,6 +309,7 @@ void SeqVerseEditor::resized()
     placeRow (pitchColumn, octaves);
     placeSelector (pitchColumn, playMode);
     placeSelector (pitchColumn, arpDirection);
+    placeToggle (pitchColumn, midiRoot);
 
     auto rhythmColumn = column ("Rhythm");
     placeSelector (rhythmColumn, stepRate);

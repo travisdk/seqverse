@@ -1033,6 +1033,30 @@ int main (int argc, char** argv)
         check (run (s).empty(), "no notes at all, and the MIDI input is not passed on");
     }
 
+    std::printf ("MIDI Root\n");
+    {
+        // Off (the default): the note in is still not passed on, and it does not change the key either
+        Scenario s;
+        s.midiIn = { makeMidi (0, 0x90, 64, 100) }; // E, at the very first sample
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)),
+               "MIDI Root off: an incoming note does not change the key");
+
+        // On, and a note received before the first block it plays on: the root latches to its pitch class, not Key
+        s.rawParams = { { "MIDI Root", 1 } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 66, 68, 69, 71, 73, 75, 64, 66 }, 0)),
+               "MIDI Root on: E in latches E major, in place of C major");
+
+        // On, but nothing has been received yet: Key is used until the first note
+        s.midiIn.clear();
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 62, 64, 65, 67, 69, 71, 60, 62 }, 0)),
+               "MIDI Root on, no note received: falls back to Key");
+
+        // A note-on with velocity 0 (a note-off in running status) must not move the latch
+        s.midiIn = { makeMidi (0, 0x90, 64, 100), makeMidi (100, 0x90, 60, 0) }; // E on, then a "note on" at velocity 0 for C
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 64, 66, 68, 69, 71, 73, 75, 64, 66 }, 0)),
+               "a note-on with velocity 0 does not move the latch");
+    }
+
     // What a host does when the user picks an entry in its own parameter list, or when automation runs: it sends the
     // choice's index, without going through any text.
     std::printf ("choices picked by index, as a host sends them\n");

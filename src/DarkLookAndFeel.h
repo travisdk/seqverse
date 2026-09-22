@@ -40,6 +40,9 @@ public:
         setColour (juce::TextButton::textColourOffId, theme::text);
         setColour (juce::TextButton::textColourOnId, juce::Colours::white);
 
+        setColour (juce::ToggleButton::tickColourId, theme::accent);
+        setColour (juce::ToggleButton::tickDisabledColourId, theme::outline);
+
         setColour (juce::Slider::textBoxTextColourId, theme::text);
         setColour (juce::Slider::textBoxBackgroundColourId, theme::sunken);
         setColour (juce::Slider::textBoxOutlineColourId, theme::outline);

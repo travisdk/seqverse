@@ -181,6 +181,19 @@ int main (int argc, char** argv)
     {
         check (! enabled ("recordBars"), "the number of bars is disabled while Record is off");
         check (enabled ("record"), "the Record button is enabled");
+        check (enabled ("midiRoot"), "the MIDI Root button is enabled");
+
+        // Clicked the way a user does, not set through the parameter: the button has to toggle
+        auto* midiRootButton = dynamic_cast<juce::Button*> (editor->findChildWithID ("midiRoot"));
+        check (midiRootButton != nullptr, "the MIDI Root button is a button");
+        if (midiRootButton != nullptr)
+        {
+            midiRootButton->triggerClick();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+        }
+        check (processor.midiRootParam->get() && midiRootButton != nullptr && midiRootButton->getToggleState(),
+               "clicking MIDI Root arms it, and the button shows it");
+
         for (const char* id : { "takeIcon", "openFolder" })
         {
             auto* tip = dynamic_cast<juce::TooltipClient*> (editor->findChildWithID (id));
@@ -224,6 +237,7 @@ int main (int argc, char** argv)
         juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
         check (! enabled ("record"), "Record cannot be toggled while the host is playing");
         check (processor.recordParam->get(), "and it is still armed while the take is being recorded");
+        check (enabled ("midiRoot"), "MIDI Root is unrelated to recording, so it stays toggleable while the host plays");
 
         transport.playing = false;
         processor.processBlock (audio, midi);

@@ -155,6 +155,7 @@ SeqVerseProcessor::SeqVerseProcessor()
                                                  .withStringFromValueFunction ([] (int bars, int) { return barsText (bars); })
                                                  .withValueFromStringFunction ([] (const juce::String& text)
                                                                                { return text.trim().startsWithIgnoreCase ("no") ? 0 : text.getIntValue(); })));
+    addParameter (midiRootParam = new juce::AudioParameterBool ({ "midiRoot", 1 }, "MIDI Root", false));
 
     takeWriter = std::make_unique<TakeWriter> (*this);
     takeWriter->startThread();
@@ -174,6 +175,7 @@ void SeqVerseProcessor::prepareToPlay (double newSampleRate, int)
     internalPpq = 0.0;
     wasPlaying = false;
     hostPlaying = false;
+    latchedRootPitchClass = -1;
     recording = false;
     if (takeState.load() == take::recording)
         takeState.store (take::idle);
@@ -191,7 +193,14 @@ bool SeqVerseProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     buffer.clear();
-    midi.clear(); // incoming MIDI is not used, only generated notes leave the plugin
+
+    // Incoming notes are not played, but with MIDI Root on, the last one received latches its pitch class as the root
+    // (used by currentKey()), whether or not the host is playing, so it can be set up before pressing play.
+    for (const auto metadata : midi)
+        if (const auto message = metadata.getMessage(); message.isNoteOn())
+            latchedRootPitchClass = message.getNoteNumber() % 12;
+
+    midi.clear(); // incoming MIDI is not used to generate notes, only its root (above) is read; only generated notes leave
 
     const int numSamples = buffer.getNumSamples();
 
@@ -230,7 +239,7 @@ void SeqVerseProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
     // Settings for this block
     const auto& scale = music::scales[scaleParam->getIndex()];
-    const int key = keyParam->getIndex();
+    const int key = currentKey();
     const bool arpeggiate = playModeParam->getIndex() == music::arpeggio;
     const int direction = arpDirectionParam->getIndex();
     const double stepQuarters = music::stepRateQuarters[stepRateParam->getIndex()];
@@ -408,7 +417,7 @@ void SeqVerseProcessor::updateTake (const juce::MidiBuffer& generated, const Blo
 
         const double barBeats = take::beatsPerBar (block.tsigNumerator, block.tsigDenominator);
         current.begin (block.startQuarters, block.bpm, block.tsigNumerator, block.tsigDenominator, recordBarsParam->get() * barBeats);
-        current.description = { keyParam->getIndex(), scaleParam->getIndex(), playModeParam->getIndex(), arpDirectionParam->getIndex(),
+        current.description = { currentKey(), scaleParam->getIndex(), playModeParam->getIndex(), arpDirectionParam->getIndex(),
                                 stepRateParam->getIndex(), rhythmParam->getIndex(), euclidPulsesParam->get(), euclidStepsParam->get() };
         takeEnd = 0.0;
         recording = true;
