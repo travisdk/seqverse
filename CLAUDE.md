@@ -69,4 +69,4 @@ Only the final confirmation in Bitwig itself is manual.
 ## Repo conventions
 
 - `build/` is git-ignored. Sibling checkouts under `.claude/worktrees/` are other Claude sessions' worktrees, not part of the source tree.
-- The default branch is `main`, but the initial checkout is on `master`.
+- The default branch is `main`, pushed to the public GitHub repo `travisdk/seqverse` (`origin`).
