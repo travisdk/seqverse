@@ -143,7 +143,7 @@ int main (int argc, char** argv)
     *processor.rhythmParam = music::everyStep;
     check (! enabled ("euclidSteps") && ! enabled ("euclidPulses") && ! enabled ("euclidRotation"), "the Euclidean settings are disabled again");
 
-    std::printf ("a horizontal slider just above its minimum\n");
+    std::printf ("a knob just above its minimum\n");
     *processor.swingParam = 2;
     snapshot ("swing2");
     *processor.swingParam = 0;

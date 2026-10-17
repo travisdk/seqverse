@@ -6,10 +6,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # SDK sources shared between plugin projects, override with -DJUCE_DIR=... / -DCLAP_JUCE_EXTENSIONS_DIR=...
-#   JUCE                   7.0.9  (git tag)
-#   clap-juce-extensions   54d83e1 (0.26.0-83), with submodules
-set(JUCE_DIR "$ENV{HOME}/SDKs/JUCE" CACHE PATH "Path to a JUCE source tree")
-set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{HOME}/SDKs/clap-juce-extensions" CACHE PATH
+#   JUCE                   8.0.15  (git tag)
+#   clap-juce-extensions   7adee3a (0.26.0-117), with submodules
+set(JUCE_DIR "$ENV{HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
+set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
     "Path to a clap-juce-extensions source tree")
 
 foreach(sdk_dir JUCE_DIR CLAP_JUCE_EXTENSIONS_DIR)
@@ -20,6 +20,13 @@ endforeach()
 
 add_subdirectory(${JUCE_DIR} juce EXCLUDE_FROM_ALL)
 add_subdirectory(${CLAP_JUCE_EXTENSIONS_DIR} clap-juce-extensions EXCLUDE_FROM_ALL)
+
+# The editor's fonts, as BinaryData (SIL Open Font License, see resources/fonts/*/OFL.txt)
+juce_add_binary_data(SeqVerseFonts SOURCES
+    resources/fonts/ChakraPetch/ChakraPetch-SemiBold.ttf
+    resources/fonts/ChakraPetch/ChakraPetch-Bold.ttf
+    resources/fonts/JetBrainsMono/JetBrainsMono-Medium.ttf)
+set_target_properties(SeqVerseFonts PROPERTIES POSITION_INDEPENDENT_CODE ON) # linked into the plugin's shared library
 
 # JUCE has no CLAP format of its own: clap-juce-extensions wraps this (VST3-formatted) target as a CLAP.
 juce_add_plugin(SeqVerse
@@ -49,6 +56,7 @@ target_compile_definitions(SeqVerse PUBLIC
 
 target_link_libraries(SeqVerse
     PRIVATE
+        SeqVerseFonts
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
@@ -90,6 +98,7 @@ target_compile_definitions(SeqVerseUiTest PRIVATE
 
 target_link_libraries(SeqVerseUiTest
     PRIVATE
+        SeqVerseFonts
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
@@ -126,6 +135,7 @@ target_compile_definitions(LayoutMockup PRIVATE
 
 target_link_libraries(LayoutMockup
     PRIVATE
+        SeqVerseFonts
         juce::juce_gui_basics
     PUBLIC
         juce::juce_recommended_config_flags

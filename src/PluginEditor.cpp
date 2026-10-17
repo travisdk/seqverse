@@ -3,26 +3,38 @@
 
 namespace
 {
-constexpr int kWidth = 840;
 constexpr int kMargin = 16;
-constexpr int kColumnGap = 20;
-constexpr int kColumns = 3;
+constexpr int kPanelGap = 12;
+constexpr int kPadding = 14;        // inside a panel
+constexpr int kHeadingHeight = 26;  // a panel's name, at its top
+constexpr int kInnerWidth = 270;    // what a panel holds: three knobs side by side
+constexpr int kPanelWidth = kInnerWidth + 2 * kPadding;
+constexpr int kWidth = 2 * kMargin + 3 * kPanelWidth + 2 * kPanelGap;
 
-constexpr int kControlHeight = 26;   // a dropdown or a slider
-constexpr int kRowHeight = 34;       // a control and the gap to the next row
-constexpr int kRowsPerColumn = 8; // Pitch has 8 (MIDI Root is the extra one), Rhythm and Feel leave the last row empty
-constexpr int kLabelWidth = 88;
-constexpr int kValueWidth = 64;      // the value box of a slider, wide enough for "4.5 beats"
-constexpr int kHeadingHeight = 26;
+constexpr int kHeaderHeight = 40;
+constexpr int kCaptionHeight = 16;  // a control's name, above it
+constexpr int kFieldHeight = 28;    // a dropdown or a row of chips
+constexpr int kKnobHeight = 60;     // a knob and its value below it
+constexpr int kValueHeight = 18;
+constexpr int kRowGap = 12;
+constexpr int kFieldGap = 10;       // between two fields side by side
+constexpr int kKnobWidth = kInnerWidth / 3;
+constexpr int kNarrowWidth = 80;    // the dropdown of a short value: key, step rate, note length
+constexpr int kSwitchWidth = 52;
 
-constexpr int kRecordRowHeight = 56;  // the page that is dragged out is 44 by 56
-constexpr int kIconWidth = 44;
-constexpr int kRecordButtonWidth = 96;
-constexpr int kOpenFolderWidth = 104;
+constexpr int kFieldRow = kCaptionHeight + kFieldHeight;
+constexpr int kKnobRow = kCaptionHeight + kKnobHeight;
+// Pitch is the tallest: three rows of fields and one of knobs. Rhythm and Feel spread their rows over the same height.
+constexpr int kSectionHeight = kPadding + kHeadingHeight + 3 * kFieldRow + kKnobRow + 3 * kRowGap + kPadding;
+constexpr int kRecordPadding = 10;  // the Record panel has no heading (the button says it) and is only as tall as the bars knob
+constexpr int kRecordHeight = kRecordPadding + kKnobRow + kRecordPadding;
+constexpr int kHeight = kMargin + kHeaderHeight + kPanelGap + kSectionHeight + kPanelGap + kRecordHeight + kMargin;
 
-// The margins, the title, the three columns of rows, and the record band
-constexpr int kHeight = kMargin + 44 + kHeadingHeight + 4 + kRowsPerColumn * kRowHeight
-                        + kHeadingHeight + 4 + kRecordRowHeight + kMargin;
+constexpr int kRecordButtonWidth = 110;
+constexpr int kButtonHeight = 30;
+constexpr int kIconWidth = 44;      // the page that is dragged out is 44 by 56
+constexpr int kIconHeight = 56;
+constexpr int kOpenFolderWidth = 130;
 }
 
 void TakeIcon::setFile (const juce::File& newFile)
@@ -54,52 +66,48 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
 {
     setLookAndFeel (&look); // the components below take their look from here
 
-    titleLabel.setText ("SeqVerse", juce::dontSendNotification);
-    titleLabel.setJustificationType (juce::Justification::centredLeft);
-    titleLabel.setFont (juce::Font (26.0f, juce::Font::bold));
-    titleLabel.setColour (juce::Label::textColourId, theme::text);
-    addAndMakeVisible (titleLabel);
-
     setUpSelector (key, "Key", *processor.keyParam);
     setUpSelector (scale, "Scale", *processor.scaleParam);
-    setUpSelector (octaveNote, "Octave note", *processor.octaveNoteParam);
-    setUpRow (lowOctave, "Low octave", *processor.lowOctaveParam);
-    setUpRow (octaves, "Octaves", *processor.octavesParam);
-    setUpSelector (playMode, "Play mode", *processor.playModeParam);
+    setUpChoice (playMode, "Play mode", *processor.playModeParam);
+    setUpChoice (octaveNote, "Octave note", *processor.octaveNoteParam);
     setUpSelector (arpDirection, "Arp direction", *processor.arpDirectionParam);
+    setUpKnob (lowOctave, "Low octave", *processor.lowOctaveParam);
+    setUpKnob (octaves, "Octaves", *processor.octavesParam);
     setUpToggle (midiRoot, "MIDI Root", *processor.midiRootParam);
     midiRoot.button.setTooltip ("The next MIDI note received sets the root note (in place of Key) until another one arrives.");
 
     setUpSelector (stepRate, "Step rate", *processor.stepRateParam);
-    setUpSelector (rhythm, "Rhythm", *processor.rhythmParam);
+    setUpChoice (rhythm, "Rhythm", *processor.rhythmParam);
 
     // The value text ("Off", "4.5 beats", "Auto") and what is typed into the value box are handled by the
     // parameters through the slider attachments, so the host shows the same text
-    setUpRow (euclidSteps, "Pattern length", *processor.euclidStepsParam);
-    setUpRow (euclidPulses, "Pulses", *processor.euclidPulsesParam);
-    setUpRow (euclidRotation, "Rotation", *processor.euclidRotationParam);
-    setUpRow (cycleLength, "Cycle length", *processor.cycleLengthParam);
-    setUpRow (swing, "Swing", *processor.swingParam);
+    setUpKnob (euclidSteps, "Pattern length", *processor.euclidStepsParam);
+    setUpKnob (euclidPulses, "Pulses", *processor.euclidPulsesParam);
+    setUpKnob (euclidRotation, "Rotation", *processor.euclidRotationParam);
+    setUpKnob (cycleLength, "Cycle length", *processor.cycleLengthParam);
+    setUpKnob (swing, "Swing", *processor.swingParam);
     swing.slider.setTextValueSuffix (" %");
 
     setUpSelector (noteLength, "Note length", *processor.noteLengthParam);
-    setUpRow (lengthVariation, "Length var.", *processor.lengthVariationParam);
+    setUpKnob (lengthVariation, "Length var.", *processor.lengthVariationParam);
     lengthVariation.slider.setTextValueSuffix (" %");
-    setUpRow (velocity, "Velocity", *processor.velocityParam);
-    setUpRow (velocityVariation, "Velocity +/-", *processor.velocityVariationParam);
-    setUpRow (chance, "Chance", *processor.chanceParam);
+    setUpKnob (velocity, "Velocity", *processor.velocityParam);
+    setUpKnob (velocityVariation, "Velocity +/-", *processor.velocityVariationParam);
+    setUpKnob (chance, "Chance", *processor.chanceParam);
     chance.slider.setTextValueSuffix (" %");
-    setUpRow (channel, "Channel", *processor.channelParam);
-    setUpRow (seed, "Seed", *processor.seedParam);
+    setUpKnob (channel, "Channel", *processor.channelParam);
+    setUpKnob (seed, "Seed", *processor.seedParam);
 
     record.button.setButtonText ("Record");
     record.button.setComponentID (processor.recordParam->getParameterID());
+    record.button.getProperties().set (DarkLookAndFeel::recordProperty, true);
     record.button.setClickingTogglesState (true); // the attachment does not do it, and a click would set the parameter back
     record.attachment = std::make_unique<juce::ButtonParameterAttachment> (*processor.recordParam, record.button);
     addAndMakeVisible (record.button);
-    setUpRow (recordBars, "Bars", *processor.recordBarsParam);
+    setUpKnob (recordBars, "Bars", *processor.recordBarsParam);
 
     takeStatus.setJustificationType (juce::Justification::centredLeft);
+    takeStatus.setFont (look.labelFont (13.5f));
     addAndMakeVisible (takeStatus);
     takeIcon.setComponentID ("takeIcon");
     takeIcon.setTooltip ("Drag the take into your host. Not every host accepts a file dragged from a plugin: "
@@ -115,8 +123,8 @@ SeqVerseEditor::SeqVerseEditor (SeqVerseProcessor& p)
 
     // The attachments notify these on host changes (automation) as well as on changes made here
     record.button.onClick = [this] { updateEnabledControls(); showTake(); };
-    playMode.box.onChange = [this] { updateEnabledControls(); };
-    rhythm.box.onChange = [this] { updateEnabledControls(); };
+    playMode.buttons.onChange = [this] { updateEnabledControls(); };
+    rhythm.buttons.onChange = [this] { updateEnabledControls(); };
     chance.slider.onValueChange = [this] { updateEnabledControls(); };
     velocityVariation.slider.onValueChange = [this] { updateEnabledControls(); };
     lengthVariation.slider.onValueChange = [this] { updateEnabledControls(); };
@@ -216,10 +224,19 @@ void SeqVerseEditor::setEnabled (Setting& setting, bool enabled)
     setting.slider.setEnabled (enabled);
 }
 
+void SeqVerseEditor::setUpCaption (juce::Label& label, const juce::String& text, juce::Justification justification)
+{
+    label.setText (text.toUpperCase(), juce::dontSendNotification);
+    label.setFont (look.captionFont());
+    label.setJustificationType (justification);
+    label.setMinimumHorizontalScale (0.7f);
+    label.setBorderSize ({});
+    addAndMakeVisible (label);
+}
+
 void SeqVerseEditor::setUpSelector (Selector& selector, const juce::String& text, juce::AudioParameterChoice& parameter)
 {
-    selector.label.setText (text, juce::dontSendNotification);
-    addAndMakeVisible (selector.label);
+    setUpCaption (selector.label, text, juce::Justification::centredLeft);
 
     selector.box.setComponentID (parameter.getParameterID());
     selector.box.addItemList (parameter.choices, 1);
@@ -228,25 +245,31 @@ void SeqVerseEditor::setUpSelector (Selector& selector, const juce::String& text
     selector.attachment = std::make_unique<juce::ComboBoxParameterAttachment> (parameter, selector.box);
 }
 
-void SeqVerseEditor::setUpRow (Setting& row, const juce::String& text, juce::RangedAudioParameter& parameter)
+void SeqVerseEditor::setUpChoice (Choice& choice, const juce::String& text, juce::AudioParameterChoice& parameter)
 {
-    row.label.setText (text, juce::dontSendNotification);
-    row.label.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (row.label);
+    setUpCaption (choice.label, text, juce::Justification::centredLeft);
 
-    row.slider.setComponentID (parameter.getParameterID());
-    row.slider.setSliderStyle (juce::Slider::LinearHorizontal);
-    row.slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, kValueWidth, 22);
-    addAndMakeVisible (row.slider);
+    choice.buttons.setComponentID (parameter.getParameterID());
+    choice.buttons.setParameter (parameter);
+    addAndMakeVisible (choice.buttons);
+}
 
-    row.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, row.slider);
+void SeqVerseEditor::setUpKnob (Setting& knob, const juce::String& text, juce::RangedAudioParameter& parameter)
+{
+    setUpCaption (knob.label, text, juce::Justification::centred);
+
+    knob.slider.setComponentID (parameter.getParameterID());
+    knob.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    knob.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, kKnobWidth, kValueHeight);
+    addAndMakeVisible (knob.slider);
+
+    knob.attachment = std::make_unique<juce::SliderParameterAttachment> (parameter, knob.slider);
+    knob.slider.setDoubleClickReturnValue (true, parameter.convertFrom0to1 (parameter.getDefaultValue()));
 }
 
 void SeqVerseEditor::setUpToggle (Toggle& toggle, const juce::String& text, juce::AudioParameterBool& parameter)
 {
-    toggle.label.setText (text, juce::dontSendNotification);
-    toggle.label.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (toggle.label);
+    setUpCaption (toggle.label, text, juce::Justification::centred);
 
     toggle.button.setComponentID (parameter.getParameterID());
     addAndMakeVisible (toggle.button);
@@ -257,94 +280,155 @@ void SeqVerseEditor::setUpToggle (Toggle& toggle, const juce::String& text, juce
 void SeqVerseEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-
-    // A heading is its name in the accent colour and a line to the end of its section
-    const juce::Font font (12.0f, juce::Font::bold);
-    g.setFont (font);
-    for (const auto& heading : headings)
-    {
-        const auto text = heading.text.toUpperCase();
-        g.setColour (theme::accent);
-        g.drawText (text, heading.area, juce::Justification::centredLeft);
-        g.setColour (theme::outline);
-        g.drawHorizontalLine (heading.area.getCentreY(), (float) heading.area.getX() + font.getStringWidthFloat (text) + 10.0f,
-                              (float) heading.area.getRight());
-    }
+    look.drawHeader (g, header);
+    for (const auto& panel : panels)
+        look.drawPanel (g, panel.area, panel.heading, kPadding, kHeadingHeight);
 }
 
 void SeqVerseEditor::resized()
 {
     auto area = getLocalBounds().reduced (kMargin);
-    titleLabel.setBounds (area.removeFromTop (36));
-    area.removeFromTop (8);
-    headings.clear();
+    header = area.removeFromTop (kHeaderHeight);
+    area.removeFromTop (kPanelGap);
+    panels.clear();
 
-    // Three columns of seven rows, dropdowns and sliders, each with its name to the left
-    auto columns = area.removeFromTop (kHeadingHeight + 4 + kRowsPerColumn * kRowHeight);
-    const int columnWidth = (columns.getWidth() - (kColumns - 1) * kColumnGap) / kColumns;
-    const auto column = [&] (const juce::String& heading)
+    // A panel with its heading, and what is inside it
+    const auto panel = [&] (const juce::String& heading, juce::Rectangle<int> bounds)
     {
-        auto cell = columns.removeFromLeft (columnWidth);
-        columns.removeFromLeft (kColumnGap);
-        headings.push_back ({ heading, cell.removeFromTop (kHeadingHeight) });
-        cell.removeFromTop (4);
-        return cell;
+        panels.push_back ({ heading, bounds });
+        return bounds.reduced (kPadding).withTrimmedTop (kHeadingHeight);
     };
 
-    const auto place = [] (juce::Rectangle<int>& cell, juce::Component& label, juce::Component& control)
+    // Rows of fields and knobs, the first at the top of the panel and the last at its bottom
+    const auto rows = [] (juce::Rectangle<int> content, std::initializer_list<int> heights)
     {
-        auto row = cell.removeFromTop (kRowHeight).withHeight (kControlHeight);
-        label.setBounds (row.removeFromLeft (kLabelWidth));
-        control.setBounds (row);
+        int total = 0;
+        for (int h : heights)
+            total += h;
+        const int gap = heights.size() > 1 ? (content.getHeight() - total) / (int) (heights.size() - 1) : 0;
+        std::vector<juce::Rectangle<int>> result;
+        for (int h : heights)
+        {
+            result.push_back (content.removeFromTop (h));
+            content.removeFromTop (gap);
+        }
+        return result;
     };
-    const auto placeSelector = [&] (juce::Rectangle<int>& cell, Selector& selector) { place (cell, selector.label, selector.box); };
-    const auto placeRow = [&] (juce::Rectangle<int>& cell, Setting& setting) { place (cell, setting.label, setting.slider); };
-    const auto placeToggle = [&] (juce::Rectangle<int>& cell, Toggle& toggle) { place (cell, toggle.label, toggle.button); };
 
-    auto pitchColumn = column ("Pitch");
-    placeSelector (pitchColumn, key);
-    placeSelector (pitchColumn, scale);
-    placeSelector (pitchColumn, octaveNote);
-    placeRow (pitchColumn, lowOctave);
-    placeRow (pitchColumn, octaves);
-    placeSelector (pitchColumn, playMode);
-    placeSelector (pitchColumn, arpDirection);
-    placeToggle (pitchColumn, midiRoot);
+    // A control with its name above it
+    const auto place = [] (juce::Rectangle<int> cell, juce::Label& label, juce::Component& control)
+    {
+        label.setBounds (cell.removeFromTop (kCaptionHeight));
+        control.setBounds (cell);
+    };
+    const auto placeSelector = [&] (juce::Rectangle<int> cell, Selector& selector) { place (cell, selector.label, selector.box); };
+    const auto placeChoice = [&] (juce::Rectangle<int> cell, Choice& choice) { place (cell, choice.label, choice.buttons); };
+    const auto knobCell = [] (juce::Rectangle<int> row, int index) { return row.withX (row.getX() + index * kKnobWidth).withWidth (kKnobWidth); };
+    const auto placeKnob = [&] (juce::Rectangle<int> row, int index, Setting& knob) { place (knobCell (row, index), knob.label, knob.slider); };
 
-    auto rhythmColumn = column ("Rhythm");
-    placeSelector (rhythmColumn, stepRate);
-    placeSelector (rhythmColumn, rhythm);
-    placeRow (rhythmColumn, euclidSteps);
-    placeRow (rhythmColumn, euclidPulses);
-    placeRow (rhythmColumn, euclidRotation);
-    placeRow (rhythmColumn, cycleLength);
-    placeRow (rhythmColumn, swing);
+    // Two fields side by side: a narrow one and the rest, or two halves
+    const auto split = [] (juce::Rectangle<int> row, int leftWidth)
+    {
+        auto left = row.removeFromLeft (leftWidth);
+        row.removeFromLeft (kFieldGap);
+        return std::pair { left, row };
+    };
+    const int halfWidth = (kInnerWidth - kFieldGap) / 2;
 
-    auto feelColumn = column ("Feel");
-    placeSelector (feelColumn, noteLength);
-    placeRow (feelColumn, lengthVariation);
-    placeRow (feelColumn, velocity);
-    placeRow (feelColumn, velocityVariation);
-    placeRow (feelColumn, chance);
-    placeRow (feelColumn, channel);
-    placeRow (feelColumn, seed);
+    auto sections = area.removeFromTop (kSectionHeight);
+    const auto nextSection = [&] (const juce::String& heading)
+    {
+        auto bounds = sections.removeFromLeft (kPanelWidth);
+        sections.removeFromLeft (kPanelGap);
+        return panel (heading, bounds);
+    };
 
-    // Record: the button, the number of bars, the page with the last take, and what is happening
-    headings.push_back ({ "Record", area.removeFromTop (kHeadingHeight) });
-    area.removeFromTop (4);
-    auto band = area.removeFromTop (kRecordRowHeight);
+    {
+        const auto r = rows (nextSection ("Pitch"), { kFieldRow, kFieldRow, kFieldRow, kKnobRow });
+        const auto [keyCell, scaleCell] = split (r[0], kNarrowWidth);
+        placeSelector (keyCell, key);
+        placeSelector (scaleCell, scale);
+        const auto [playModeCell, octaveNoteCell] = split (r[1], halfWidth);
+        placeChoice (playModeCell, playMode);
+        placeChoice (octaveNoteCell, octaveNote);
+        placeSelector (r[2], arpDirection);
+        placeKnob (r[3], 0, lowOctave);
+        placeKnob (r[3], 1, octaves);
+        auto rootCell = knobCell (r[3], 2);
+        midiRoot.label.setBounds (rootCell.removeFromTop (kCaptionHeight));
+        midiRoot.button.setBounds (rootCell.removeFromTop (kKnobHeight - kValueHeight).withSizeKeepingCentre (kSwitchWidth, 22));
+    }
 
-    record.button.setBounds (band.removeFromLeft (kRecordButtonWidth).withSizeKeepingCentre (kRecordButtonWidth, kControlHeight + 4));
-    band.removeFromLeft (kColumnGap);
-    auto barsCell = band.removeFromLeft (kLabelWidth + columnWidth - 40).withSizeKeepingCentre (kLabelWidth + columnWidth - 40, kControlHeight);
-    recordBars.label.setBounds (barsCell.removeFromLeft (kLabelWidth));
-    recordBars.slider.setBounds (barsCell);
-    band.removeFromLeft (kColumnGap);
-    takeIcon.setBounds (band.removeFromLeft (kIconWidth));
-    band.removeFromLeft (kColumnGap / 2);
-    openFolder.setBounds (band.removeFromRight (kOpenFolderWidth).withSizeKeepingCentre (kOpenFolderWidth, kControlHeight + 4));
-    band.removeFromRight (kColumnGap / 2);
+    {
+        const auto r = rows (nextSection ("Rhythm"), { kFieldRow, kKnobRow, kKnobRow });
+        const auto [stepRateCell, rhythmCell] = split (r[0], kNarrowWidth);
+        placeSelector (stepRateCell, stepRate);
+        placeChoice (rhythmCell, rhythm);
+        placeKnob (r[1], 0, euclidSteps);
+        placeKnob (r[1], 1, euclidPulses);
+        placeKnob (r[1], 2, euclidRotation);
+        placeKnob (r[2], 0, cycleLength);
+        placeKnob (r[2], 1, swing);
+    }
+
+    {
+        const auto r = rows (nextSection ("Feel"), { kFieldRow, kKnobRow, kKnobRow });
+        placeSelector (r[0].withWidth (kNarrowWidth), noteLength);
+        placeKnob (r[1], 0, velocity);
+        placeKnob (r[1], 1, velocityVariation);
+        placeKnob (r[1], 2, chance);
+        placeKnob (r[2], 0, lengthVariation);
+        placeKnob (r[2], 1, channel);
+        placeKnob (r[2], 2, seed);
+    }
+
+    // Record: the button, the number of bars, the page with the last take, what is happening, and the folder
+    area.removeFromTop (kPanelGap);
+    auto band = area.removeFromTop (kRecordHeight);
+    panels.push_back ({ {}, band });
+    band.reduce (kPadding, kRecordPadding);
+    const auto middle = [&] (juce::Rectangle<int> cell, int height) { return cell.withSizeKeepingCentre (cell.getWidth(), height); };
+
+    record.button.setBounds (middle (band.removeFromLeft (kRecordButtonWidth), kButtonHeight));
+    band.removeFromLeft (kFieldGap);
+    place (band.removeFromLeft (kKnobWidth), recordBars.label, recordBars.slider);
+    band.removeFromLeft (kFieldGap);
+    takeIcon.setBounds (middle (band.removeFromLeft (kIconWidth), kIconHeight));
+    band.removeFromLeft (kFieldGap * 2);
+    openFolder.setBounds (middle (band.removeFromRight (kOpenFolderWidth), kButtonHeight));
+    band.removeFromRight (kFieldGap);
     takeStatus.setBounds (band);
 
-    repaint(); // the headings have moved
+    repaint(); // the panels have moved
+}
+
+void SegmentedChoice::setParameter (juce::AudioParameterChoice& parameter)
+{
+    for (int i = 0; i < parameter.choices.size(); ++i)
+    {
+        auto* button = buttons.add (new juce::TextButton (parameter.choices[i]));
+        button->onClick = [this, i] { attachment->setValueAsCompleteGesture ((float) i); };
+        addAndMakeVisible (button);
+    }
+
+    attachment = std::make_unique<juce::ParameterAttachment> (parameter, [this] (float value) { showIndex (juce::roundToInt (value)); });
+    attachment->sendInitialUpdate();
+}
+
+void SegmentedChoice::showIndex (int index)
+{
+    for (int i = 0; i < buttons.size(); ++i)
+        buttons[i]->setToggleState (i == index, juce::dontSendNotification);
+
+    if (onChange != nullptr)
+        onChange();
+}
+
+void SegmentedChoice::resized()
+{
+    constexpr int gap = 5;
+    const int n = buttons.size();
+    const int w = (getWidth() - gap * (n - 1)) / n;
+    for (int i = 0; i < n; ++i)
+        buttons[i]->setBounds (i * (w + gap), 0, i == n - 1 ? getWidth() - i * (w + gap) : w, getHeight());
 }

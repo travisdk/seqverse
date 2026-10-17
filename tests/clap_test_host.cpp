@@ -723,17 +723,18 @@ int main (int argc, char** argv)
         check (audioPorts != nullptr && audioPorts->count (i.plugin, true) == 0 && audioPorts->count (i.plugin, false) == 1,
                "audio ports: no input, one output");
         // A host only offers a stepped parameter the values between its min and max. If the range were 0..1 for
-        // the 44 scales, Bitwig could pick just two of them, so the reported span has to be one step per choice.
-        // Integer parameters are not flagged stepped by JUCE, so for them only the span is required.
+        // the 44 scales, Bitwig could pick just two of them, so the reported span has to be one per choice. Since
+        // clap-juce-extensions e286d28 (needed for JUCE 8) only booleans are flagged stepped: choices and integers
+        // are continuous to the host over their real range, and the plugin rounds what it gets (see below).
         struct Span { const char* name; double span; bool mustBeStepped; };
         const Span spans[] = {
-            { "Key", music::kNumKeys - 1, true },
-            { "Scale", music::kNumScales - 1, true },
-            { "Play Mode", music::numPlayModes - 1, true },
-            { "Arp Direction", music::numArpDirections - 1, true },
-            { "Octave Note", music::numOctaveNoteChoices - 1, true },
-            { "Step Rate", music::kNumStepRates - 1, true },
-            { "Note Length", music::kNumNoteLengths - 1, true },
+            { "Key", music::kNumKeys - 1, false },
+            { "Scale", music::kNumScales - 1, false },
+            { "Play Mode", music::numPlayModes - 1, false },
+            { "Arp Direction", music::numArpDirections - 1, false },
+            { "Octave Note", music::numOctaveNoteChoices - 1, false },
+            { "Step Rate", music::kNumStepRates - 1, false },
+            { "Note Length", music::kNumNoteLengths - 1, false },
             { "Chance", 100, false },
             { "Swing", 100, false },
             { "Low Octave", music::kMaxOctave - music::kMinOctave, false },
@@ -744,7 +745,7 @@ int main (int argc, char** argv)
             { "Cycle Length", music::kMaxCycleHalfBeats, false },
             { "Seed", 9999, false },
             { "Length Variation", 100, false },
-            { "Rhythm", music::numRhythms - 1, true },
+            { "Rhythm", music::numRhythms - 1, false },
             { "Pattern Length", music::kMaxEuclidSteps - music::kMinEuclidSteps, false },
             { "Pulses", music::kMaxEuclidPulses, false },
             { "Rotation", music::kMaxEuclidRotation, false },
@@ -1070,6 +1071,13 @@ int main (int argc, char** argv)
 
         s.rawParams = { { "Scale", 20 } }; // Double Harmonic (Byzantine): 0 1 4 5 7 8 11
         check (sameNotes (notesOf (run (s), 0x90), grid ({ 60, 61, 64, 65, 67, 68, 71, 60, 61 }, 0)), "and one from the middle of the list");
+
+        // Choices are not stepped to the host, so it can send a value between two indices (a knob in its parameter
+        // list, a curve of automation): the nearest choice is taken, not the one below
+        s.rawParams = { { "Key", 1.6 }, { "Scale", 4.6 } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 62, 63, 65, 67, 69, 70, 72, 62, 63 }, 0)), "Key 1.6 and Scale 4.6 round up to D Phrygian");
+        s.rawParams = { { "Key", 2.4 }, { "Scale", 5.4 } };
+        check (sameNotes (notesOf (run (s), 0x90), grid ({ 62, 63, 65, 67, 69, 70, 72, 62, 63 }, 0)), "Key 2.4 and Scale 5.4 round down to it");
     }
 
     std::printf ("step rate\n");

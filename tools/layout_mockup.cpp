@@ -21,7 +21,7 @@ public:
     void title (juce::Rectangle<int> area)
     {
         auto* label = addLabel ("SeqVerse", area, juce::Justification::centredLeft);
-        label->setFont (juce::Font (26.0f, juce::Font::bold));
+        label->setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
         label->setColour (juce::Label::textColourId, theme::text);
     }
 
@@ -85,12 +85,12 @@ public:
     {
         g.fillAll (theme::background);
 
-        g.setFont (juce::Font (12.0f, juce::Font::bold));
+        g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
         for (const auto& h : headers)
         {
             g.setColour (theme::accent);
             g.drawText (h.text.toUpperCase(), h.area, juce::Justification::centredLeft);
-            const int textWidth = juce::roundToInt (juce::Font (12.0f, juce::Font::bold).getStringWidthFloat (h.text.toUpperCase())) + 10;
+            const int textWidth = juce::roundToInt (juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)), h.text.toUpperCase())) + 10;
             g.setColour (theme::outline);
             g.drawHorizontalLine (h.area.getCentreY(), (float) h.area.getX() + (float) textWidth, (float) h.area.getRight());
         }

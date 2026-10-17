@@ -153,7 +153,7 @@ public:
         g.strokePath (arc (geo.centre, r, start, geo.angle), juce::PathStrokeType (9.0f, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
 
         g.setColour (ink.withAlpha (geo.alpha));
-        g.setFont (juce::Font (r * 0.36f, juce::Font::bold));
+        g.setFont (juce::Font (juce::FontOptions (r * 0.36f, juce::Font::bold)));
         g.drawFittedText (slider.getTextFromValue (slider.getValue()), juce::Rectangle<float> (r * 1.5f, r * 0.9f).withCentre (geo.centre).toNearestInt(),
                           juce::Justification::centred, 2, 0.8f);
     }
@@ -215,7 +215,7 @@ public:
         setLookAndFeel (&look);
 
         titleLabel.setText (title, juce::dontSendNotification);
-        titleLabel.setFont (juce::Font (16.0f, juce::Font::bold));
+        titleLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
         titleLabel.setColour (juce::Label::textColourId, textColour);
         addAndMakeVisible (titleLabel);
 

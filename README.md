@@ -1,6 +1,6 @@
 # SeqVerse
 
-A generative MIDI sequencer plugin (CLAP and VST3), built with JUCE 7 and C++17.
+A generative MIDI sequencer plugin (CLAP and VST3), built with JUCE 8 and C++17.
 
 SeqVerse follows the host's transport and plays notes from a key and scale: as an arpeggio (15 directions) or at random,
 on a straight or Euclidean rhythm, with chance, swing, velocity and length variation. A seed makes the random choices
@@ -36,9 +36,9 @@ You need CMake 3.22 or newer, Ninja and a C++17 compiler. On Linux you also need
 The project does not include JUCE and clap-juce-extensions and does not download them. It expects them in `~/SDKs`:
 
 ```sh
-git clone --branch 7.0.9 https://github.com/juce-framework/JUCE.git ~/SDKs/JUCE
-git clone --recurse-submodules https://github.com/free-audio/clap-juce-extensions.git ~/SDKs/clap-juce-extensions
-git -C ~/SDKs/clap-juce-extensions checkout 54d83e1 && git -C ~/SDKs/clap-juce-extensions submodule update --recursive
+git clone --branch 8.0.15 https://github.com/juce-framework/JUCE.git ~/SDKs/JUCE-8.0.15
+git clone --recurse-submodules https://github.com/free-audio/clap-juce-extensions.git ~/SDKs/clap-juce-extensions-main
+git -C ~/SDKs/clap-juce-extensions-main checkout 7adee3a && git -C ~/SDKs/clap-juce-extensions-main submodule update --recursive
 ```
 
 If they are somewhere else, pass `-DJUCE_DIR=...` and `-DCLAP_JUCE_EXTENSIONS_DIR=...`. Then build:
@@ -73,8 +73,9 @@ ctest --test-dir build --output-on-failure
 | `src/Music.h` | Keys, scales, arp directions, Euclidean patterns, per-step randomness (no JUCE dependency) |
 | `src/PluginProcessor.*` | Parameters, note generation in `processBlock`, state save/load, recording takes |
 | `src/Take.h` | The recording buffer and the MIDI file writer |
-| `src/PluginEditor.*` | The editor: three columns of controls and the Record band |
-| `src/DarkLookAndFeel.h` | The theme: all colours and control drawing |
+| `src/PluginEditor.*` | The editor: three panels of knobs, dropdowns and choices, and the Record panel |
+| `src/DarkLookAndFeel.h` | The theme: all colours, fonts and control drawing |
+| `resources/fonts/` | The editor's fonts, Chakra Petch and JetBrains Mono |
 | `tests/` | The headless CLAP test host and the editor test |
 | `tools/`, `design/` | Mockups used to compare control styles and layouts |
 
@@ -93,5 +94,6 @@ Forks and pull requests are welcome. Keep these rules:
 
 ## License
 
-SeqVerse is free software under the [GNU General Public License v3.0](LICENSE). This follows from JUCE 7, whose free
-license is the GPLv3.
+SeqVerse is free software under the [GNU Affero General Public License v3.0](LICENSE). This follows from JUCE 8, whose
+free license is the AGPLv3 (earlier commits were built with JUCE 7 and released under the GPLv3). The fonts in `resources/fonts/` (Chakra Petch and JetBrains Mono) are under the SIL Open Font
+License 1.1, included next to them.

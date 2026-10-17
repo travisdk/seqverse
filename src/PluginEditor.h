@@ -20,6 +20,22 @@ private:
     bool dragStarted = false;
 };
 
+// A choice of a few, as a row of chips of which the current one is lit (Play mode, Octave note, Rhythm)
+class SegmentedChoice : public juce::Component
+{
+public:
+    void setParameter (juce::AudioParameterChoice&);
+    void resized() override;
+
+    std::function<void()> onChange; // after the choice has changed, here or in the host
+
+private:
+    void showIndex (int);
+
+    juce::OwnedArray<juce::TextButton> buttons;
+    std::unique_ptr<juce::ParameterAttachment> attachment;
+};
+
 class SeqVerseEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -38,7 +54,13 @@ private:
         std::unique_ptr<juce::ComboBoxParameterAttachment> attachment;
     };
 
-    // A slider with its name to the left and its value in a box to the right
+    struct Choice
+    {
+        juce::Label label;
+        SegmentedChoice buttons;
+    };
+
+    // A knob with its value below it, which can be clicked to type one
     struct Setting
     {
         juce::Label label;
@@ -46,9 +68,11 @@ private:
         std::unique_ptr<juce::SliderParameterAttachment> attachment;
     };
 
-    // Each control's component ID is its parameter ID, so tests can find it with findChildWithID().
+    // Each control's component ID is its parameter ID, so tests can find it with findChildWithID(). Its name is above it.
+    void setUpCaption (juce::Label&, const juce::String& text, juce::Justification);
     void setUpSelector (Selector&, const juce::String& text, juce::AudioParameterChoice&);
-    void setUpRow (Setting&, const juce::String& text, juce::RangedAudioParameter&);
+    void setUpChoice (Choice&, const juce::String& text, juce::AudioParameterChoice&);
+    void setUpKnob (Setting&, const juce::String& text, juce::RangedAudioParameter&);
 
     void timerCallback() override;
     void showTake();
@@ -63,16 +87,17 @@ private:
     DarkLookAndFeel look; // declared before the components that use it, so that it outlives them
     juce::TooltipWindow tooltipWindow { this }; // shows the tooltips of the take icon and the folder button
 
-    juce::Label titleLabel;
-    // In three columns: pitch, rhythm and feel
-    Selector key, scale, octaveNote, playMode, arpDirection;
+    // In three panels: pitch, rhythm and feel
+    Selector key, scale, arpDirection;
+    Choice playMode, octaveNote;
     Setting lowOctave, octaves;
-    Selector stepRate, rhythm;
+    Selector stepRate;
+    Choice rhythm;
     Setting euclidSteps, euclidPulses, euclidRotation, cycleLength, swing;
     Selector noteLength;
     Setting lengthVariation, velocity, velocityVariation, chance, channel, seed;
 
-    // A checkbox with its name to the left, like a Setting but for a bool parameter: MIDI Root, the 8th row of Pitch
+    // An ON/OFF switch for a bool parameter: MIDI Root, beside the octave knobs
     struct Toggle
     {
         juce::Label label;
@@ -100,9 +125,10 @@ private:
     bool shownPlaying = false;
     bool shownArmed = false;
 
-    // The section headings, painted where resized() puts them
-    struct Heading { juce::String text; juce::Rectangle<int> area; };
-    std::vector<Heading> headings;
+    // The header and the panels of the sections, painted where resized() puts them
+    struct Panel { juce::String heading; juce::Rectangle<int> area; };
+    std::vector<Panel> panels;
+    juce::Rectangle<int> header;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SeqVerseEditor)
 };
