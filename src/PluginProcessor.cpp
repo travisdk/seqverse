@@ -604,6 +604,10 @@ void SeqVerseProcessor::setStateInformation (const void* data, int sizeInBytes)
 
                 ranged->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, normalised));
             }
+
+    // Tells the host every parameter may have changed, so it reads them all again (CLAP: a params rescan of the
+    // values, which the wrapper sends for a program change). Without it a host may keep showing the old values.
+    updateHostDisplay (ChangeDetails().withProgramChanged (true));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
