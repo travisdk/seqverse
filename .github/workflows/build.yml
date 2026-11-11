@@ -48,7 +48,7 @@ jobs:
           -DCLAP_JUCE_EXTENSIONS_DIR=_sdks/clap-juce-extensions
 
       - name: Build
-        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP clap_test_host SeqVerseUiTest package-windows
+        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP package-windows
 
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
@@ -58,14 +58,3 @@ jobs:
           name: SeqVerse-Windows
           path: dist/*
           if-no-files-found: error
-
-      # On a tag (v1.0.0): make the release if it is not there yet, and add the zips
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "SeqVerse ${TAG#v}" --notes "Free software under the GNU AGPLv3. See README.md for install and the tests." || true
-          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

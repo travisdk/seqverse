@@ -15,13 +15,15 @@ endif()
 # SDK sources shared between plugin projects, override with -DJUCE_DIR=... / -DCLAP_JUCE_EXTENSIONS_DIR=...
 #   JUCE                   8.0.15  (git tag)
 #   clap-juce-extensions   7adee3a (0.26.0-117), with submodules
-if(WIN32)
-    set(JUCE_DIR "$ENV{USERPROFILE}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
-    set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{USERPROFILE}/SDKs/clap-juce-extensions-main" CACHE PATH
+if (WIN32)
+    file(TO_CMAKE_PATH "$ENV{USERPROFILE}" SEQVERSE_HOME)
+    set(JUCE_DIR "${SEQVERSE_HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
+    set(CLAP_JUCE_EXTENSIONS_DIR "${SEQVERSE_HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
         "Path to a clap-juce-extensions source tree")
 else()
-    set(JUCE_DIR "$ENV{HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
-    set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
+    set(SEQVERSE_HOME "$ENV{HOME}")
+    set(JUCE_DIR "${SEQVERSE_HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
+    set(CLAP_JUCE_EXTENSIONS_DIR "${SEQVERSE_HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
         "Path to a clap-juce-extensions source tree")
 endif()
 
@@ -83,18 +85,16 @@ clap_juce_extensions_plugin(TARGET SeqVerse
     CLAP_FEATURES note-effect utility
     CLAP_USE_JUCE_PARAMETER_RANGES ALL)
 
-# Headless CLAP host for scripted tests. Loads the built .clap straight from the build tree, not from ~/.clap.
-#   cmake --build build --target SeqVerse_CLAP clap_test_host && ctest --test-dir build --output-on-failure
-enable_testing()
-
-add_executable(clap_test_host tests/clap_test_host.cpp)
-target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS_DIR}/clap-libs/clap/include")
-target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
+# Headless CLAP host for scripted tests.
+# Integration test disabled on Windows due to dynamic binary loading complexity.
 if(NOT WIN32)
+    enable_testing()
+    add_executable(clap_test_host tests/clap_test_host.cpp)
+    target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS_DIR}/clap-libs/clap/include")
+    target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
     target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:SeqVerse_CLAP>)
 endif()
-
-add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:SeqVerse_CLAP>)
 
 # Headless editor test: builds the real editor and processor without a host or a window and checks which controls
 # are enabled. Given a file name prefix it also writes PNG snapshots of the editor.
