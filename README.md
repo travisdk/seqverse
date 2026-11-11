@@ -50,10 +50,10 @@ cmake --build build --target SeqVerse_CLAP SeqVerse_VST3
 
 The plugins are written to `build/SeqVerse_artefacts/Release/CLAP/SeqVerse.clap` and `.../VST3/SeqVerse.vst3`. Copy
 them to `~/.clap` or `~/.vst3`, or to your platform's plugin folder, and rescan in the host. SeqVerse is developed and
-tested on Linux with Bitwig Studio. Other platforms and hosts should work but have not been tried.
+tested on Linux and Windows.
 
-Releases: GitHub Actions (`.github/workflows/build.yml`) builds the VST3 and CLAP on Linux, runs the tests and makes
-`SeqVerse-<version>-Linux.zip`. A tag such as `v1.0.0` also publishes it as a GitHub release. The version is the one in
+Releases: GitHub Actions (`.github/workflows/build.yml`) builds the VST3 and CLAP on Linux and Windows, runs the tests and makes
+`SeqVerse-<version>-Linux.zip` and `SeqVerse-<version>-Windows.zip`. A tag such as `v1.0.0` also publishes them as a GitHub release. The version is the one in
 `CMakeLists.txt` and is shown in the editor's header.
 
 ## Tests
