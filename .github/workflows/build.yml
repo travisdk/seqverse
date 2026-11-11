@@ -48,10 +48,13 @@ jobs:
           -DCLAP_JUCE_EXTENSIONS_DIR=_sdks/clap-juce-extensions
 
       - name: Build
-        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP package-windows
+        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP
 
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        run: cmake --build build --config Release --target package-windows
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
