@@ -110,5 +110,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "SeqVerse ${TAG#v}" --notes "Free software under the GNU AGPLv3. See README.md for install and the tests." || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "SeqVerse ${TAG#v}" --notes "Added Windows platform support. Free software under the GNU AGPLv3. See README.md for install and the tests." || true
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
