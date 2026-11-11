@@ -5,6 +5,13 @@ project(SeqVerse VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# MSVC: link the C++ runtime statically (/MT). A plug-in runs inside the host's process, so a
+# dynamic MSVCP140.dll would have to be installed on the user's PC and could be an older version
+# already loaded by the host. Set before any target is created, so JUCE and the CLAP wrapper match.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # SDK sources shared between plugin projects, override with -DJUCE_DIR=... / -DCLAP_JUCE_EXTENSIONS_DIR=...
 #   JUCE                   8.0.15  (git tag)
 #   clap-juce-extensions   7adee3a (0.26.0-117), with submodules

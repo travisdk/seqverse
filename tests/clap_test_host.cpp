@@ -16,10 +16,15 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#define usleep(us) Sleep((us) / 1000)
+#define LOAD_LIBRARY(path) LoadLibraryA(path)
+#define GET_PROC_ADDRESS(lib, name) GetProcAddress(lib, name)
+#define SLEEP_US(us) Sleep((us) / 1000)
 #else
 #include <dlfcn.h>
 #include <unistd.h>
+#define LOAD_LIBRARY(path) dlopen(path, RTLD_NOW | RTLD_LOCAL)
+#define GET_PROC_ADDRESS(lib, name) dlsym(lib, name)
+#define SLEEP_US(us) usleep(us)
 #endif
 
 #include <algorithm>
@@ -362,7 +367,7 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
         // A human takes longer than a test to press stop and then play, and the file of a take is written in the
         // background a moment after the take is finished
         if (block == s.restartBlock)
-            usleep (300 * 1000);
+            SLEEP_US (300 * 1000);
 
         blockEvents.clear();
         if (block == 0)
@@ -396,7 +401,7 @@ std::vector<clap_event_midi_t> run (const Scenario& s)
 
     if (s.readRecordAtEnd)
     {
-        usleep (300 * 1000); // Record is switched off by the writer thread, a moment after the take is finished
+        SLEEP_US (300 * 1000); // Record is switched off by the writer thread, a moment after the take is finished
         double value = -1.0;
         const auto found = inst.infos.find ("Record");
         if (found != inst.infos.end() && inst.params != nullptr)
@@ -704,24 +709,24 @@ int main (int argc, char** argv)
     takeFolder = tempRoot / "takes";
     setenv ("SEQVERSE_TAKE_FOLDER", takeFolder.c_str(), 1);
 
-    #if ! defined(_WIN32)
-    void* lib = dlopen (argv[1], RTLD_NOW | RTLD_LOCAL);
-    if (lib == nullptr)
-    {
-        std::fprintf (stderr, "dlopen failed: %s\n", dlerror());
-        return 2;
-    }
-
-    auto* entry = static_cast<const clap_plugin_entry_t*> (dlsym (lib, "clap_entry"));
-#else
-    HMODULE lib = LoadLibraryA (argv[1]);
+    #if defined(_WIN32)
+    HMODULE lib = (HMODULE) LOAD_LIBRARY(argv[1]);
     if (lib == nullptr)
     {
         std::fprintf (stderr, "LoadLibraryA failed: %lu\n", GetLastError());
         return 2;
     }
 
-    auto* entry = reinterpret_cast<const clap_plugin_entry_t*> (GetProcAddress (lib, "clap_entry"));
+    auto* entry = reinterpret_cast<const clap_plugin_entry_t*> (GET_PROC_ADDRESS(lib, "clap_entry"));
+#else
+    void* lib = LOAD_LIBRARY(argv[1]);
+    if (lib == nullptr)
+    {
+        std::fprintf (stderr, "dlopen failed: %s\n", dlerror());
+        return 2;
+    }
+
+    auto* entry = static_cast<const clap_plugin_entry_t*> (GET_PROC_ADDRESS(lib, "clap_entry"));
 #endif
     if (entry == nullptr || ! entry->init (argv[1]))
     {

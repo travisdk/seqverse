@@ -48,21 +48,10 @@ jobs:
           -DCLAP_JUCE_EXTENSIONS_DIR=_sdks/clap-juce-extensions
 
       - name: Build
-        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP clap_test_host SeqVerseUiTest
+        run: cmake --build build --config Release --parallel --target SeqVerse_VST3 SeqVerse_CLAP clap_test_host SeqVerseUiTest package-windows
 
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
-
-      - name: Package
-        shell: bash
-        run: |
-          version="$(sed -n 's/^project(SeqVerse VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
-          test -n "$version" || { echo "no version in CMakeLists.txt"; exit 1; }
-          mkdir -p dist
-          cd build/SeqVerse_artefacts/Release
-          7z a "$GITHUB_WORKSPACE/dist/SeqVerse-${version}-Windows.zip" VST3/SeqVerse.vst3 CLAP/SeqVerse.clap
-          cd "$GITHUB_WORKSPACE"
-          7z l dist/*.zip
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
