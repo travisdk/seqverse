@@ -86,7 +86,6 @@ target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
 if(NOT WIN32)
     target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-endif()
 
 add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:SeqVerse_CLAP>)
 
