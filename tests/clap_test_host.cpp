@@ -14,7 +14,11 @@
 #include "../src/Music.h"
 #include "../src/Take.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <unistd.h>
 
 #include <algorithm>
@@ -699,6 +703,7 @@ int main (int argc, char** argv)
     takeFolder = tempRoot / "takes";
     setenv ("SEQVERSE_TAKE_FOLDER", takeFolder.c_str(), 1);
 
+    #if ! defined(_WIN32)
     void* lib = dlopen (argv[1], RTLD_NOW | RTLD_LOCAL);
     if (lib == nullptr)
     {
@@ -707,6 +712,16 @@ int main (int argc, char** argv)
     }
 
     auto* entry = static_cast<const clap_plugin_entry_t*> (dlsym (lib, "clap_entry"));
+#else
+    HMODULE lib = LoadLibraryA (argv[1]);
+    if (lib == nullptr)
+    {
+        std::fprintf (stderr, "LoadLibraryA failed: %lu\n", GetLastError());
+        return 2;
+    }
+
+    auto* entry = reinterpret_cast<const clap_plugin_entry_t*> (GetProcAddress (lib, "clap_entry"));
+#endif
     if (entry == nullptr || ! entry->init (argv[1]))
     {
         std::fprintf (stderr, "no usable clap_entry in %s\n", argv[1]);
