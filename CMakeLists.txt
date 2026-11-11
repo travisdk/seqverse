@@ -157,3 +157,15 @@ target_link_libraries(LayoutMockup
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# Package the artifacts, platform-neutral.
+if(WIN32)
+    add_custom_target(package-windows
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/dist"
+        COMMAND 7z a "${CMAKE_SOURCE_DIR}/dist/SeqVerse-${PROJECT_VERSION}-Windows.zip"
+            "${CMAKE_BINARY_DIR}/SeqVerse_artefacts/Release/VST3/SeqVerse.vst3"
+            "${CMAKE_BINARY_DIR}/SeqVerse_artefacts/Release/CLAP/SeqVerse.clap"
+        DEPENDS SeqVerse_VST3 SeqVerse_CLAP
+        COMMENT "Packaging dist/SeqVerse-${PROJECT_VERSION}-Windows.zip")
+endif()
+
