@@ -8,9 +8,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # SDK sources shared between plugin projects, override with -DJUCE_DIR=... / -DCLAP_JUCE_EXTENSIONS_DIR=...
 #   JUCE                   8.0.15  (git tag)
 #   clap-juce-extensions   7adee3a (0.26.0-117), with submodules
-set(JUCE_DIR "$ENV{HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
-set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
-    "Path to a clap-juce-extensions source tree")
+if(WIN32)
+    set(JUCE_DIR "$ENV{USERPROFILE}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
+    set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{USERPROFILE}/SDKs/clap-juce-extensions-main" CACHE PATH
+        "Path to a clap-juce-extensions source tree")
+else()
+    set(JUCE_DIR "$ENV{HOME}/SDKs/JUCE-8.0.15" CACHE PATH "Path to a JUCE source tree")
+    set(CLAP_JUCE_EXTENSIONS_DIR "$ENV{HOME}/SDKs/clap-juce-extensions-main" CACHE PATH
+        "Path to a clap-juce-extensions source tree")
+endif()
 
 foreach(sdk_dir JUCE_DIR CLAP_JUCE_EXTENSIONS_DIR)
     if(NOT EXISTS "${${sdk_dir}}/CMakeLists.txt")
@@ -77,7 +83,10 @@ enable_testing()
 add_executable(clap_test_host tests/clap_test_host.cpp)
 target_include_directories(clap_test_host SYSTEM PRIVATE "${CLAP_JUCE_EXTENSIONS_DIR}/clap-libs/clap/include")
 target_link_libraries(clap_test_host PRIVATE ${CMAKE_DL_LIBS})
-target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
+if(NOT WIN32)
+    target_compile_options(clap_test_host PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+endif()
 
 add_test(NAME clap_host_generator COMMAND clap_test_host $<TARGET_FILE:SeqVerse_CLAP>)
 
