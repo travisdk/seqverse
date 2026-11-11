@@ -77,7 +77,7 @@ public:
     juce::Font captionFont() const { return labelFont (12.0f).withExtraKerningFactor (0.08f); }
 
     // The plugin's name and what it is, at the top left
-    void drawHeader (juce::Graphics& g, juce::Rectangle<int> area)
+    void drawHeader (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& version)
     {
         auto bounds = area.toFloat();
         g.setColour (theme::accent);
@@ -85,7 +85,7 @@ public:
         g.drawText ("SEQVERSE", bounds.removeFromTop (bounds.getHeight() * 0.62f), juce::Justification::bottomLeft);
         g.setColour (theme::dimText);
         g.setFont (labelFont (11.0f).withExtraKerningFactor (0.16f));
-        g.drawText ("GENERATIVE MIDI SEQUENCER", bounds, juce::Justification::centredLeft);
+        g.drawText ("GENERATIVE MIDI SEQUENCER   |   v" + version, bounds, juce::Justification::centredLeft);
     }
 
     // A section: a raised panel with its name at the top left, if it has one

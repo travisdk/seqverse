@@ -53,13 +53,23 @@ juce::String barsText (int bars)
     return bars <= 0 ? juce::String ("No limit") : juce::String (bars) + (bars == 1 ? " bar" : " bars");
 }
 
-// A file name has no slashes: "C#/Db" is C#, and "1/8" is 1-8
+// A take's file name is made of letters, digits, "-" and "_" only. JUCE's X11 drag sends the path as a file:// URI without
+// percent-encoding, and Bitwig rejects a URI with a space, "#" or a parenthesis in it. "#" is written "sharp", a space, a
+// slash or a dot becomes "-", and anything else that is not a letter or a digit is left out.
 juce::String forFileName (const juce::String& text)
 {
-    return text.replaceCharacters ("/\\:*?\"<>|", "---------").trim();
+    const auto spelled = text.replace ("#", "sharp").replaceCharacters (" /.", "---");
+    juce::String name;
+    for (auto c : spelled)
+        if ((c < 128 && juce::CharacterFunctions::isLetterOrDigit (c)) || c == '-')
+            name << juce::String::charToString (c);
+
+    while (name.contains ("--"))
+        name = name.replace ("--", "-");
+    return name.trimCharactersAtStart ("-").trimCharactersAtEnd ("-");
 }
 
-// "SeqVerse 2026-09-21 19-30-12 - C# Major (Ionian) - Up - 1-8 - 4 bars.mid": the time first, so that the files sort by it,
+// "SeqVerse_2026-09-21_19-30-12_Csharp-Major-Ionian_Up_1-8_4bars.mid": the time first, so that the files sort by it,
 // then what was played
 juce::String takeFileName (const take::Take& take)
 {
@@ -67,17 +77,17 @@ juce::String takeFileName (const take::Take& take)
     const auto key = juce::String (music::keyNames[d.key]).upToFirstOccurrenceOf ("/", false, false);
 
     juce::StringArray parts;
-    parts.add (key + " " + music::scales[d.scale].name);
+    parts.add (forFileName (key + " " + music::scales[d.scale].name));
     parts.add (d.playMode == music::arpeggio ? forFileName (music::arpDirectionNames[d.arpDirection]) : juce::String ("Random"));
     parts.add (forFileName (music::stepRateNames[d.stepRate]));
     if (d.rhythm == music::euclidean)
-        parts.add ("Euclid " + juce::String (d.pulses) + " in " + juce::String (d.patternLength));
+        parts.add ("Euclid-" + juce::String (d.pulses) + "-in-" + juce::String (d.patternLength));
 
     const int tenthsOfBars = juce::roundToInt (take.endBeats / take::beatsPerBar (take.tsigNumerator, take.tsigDenominator) * 10.0);
-    parts.add ((tenthsOfBars % 10 == 0 ? juce::String (tenthsOfBars / 10) : juce::String (tenthsOfBars / 10.0, 1))
-               + (tenthsOfBars == 10 ? " bar" : " bars"));
+    parts.add (forFileName (tenthsOfBars % 10 == 0 ? juce::String (tenthsOfBars / 10) : juce::String (tenthsOfBars / 10.0, 1))
+               + (tenthsOfBars == 10 ? "bar" : "bars"));
 
-    return "SeqVerse " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + " - " + parts.joinIntoString (" - ") + ".mid";
+    return "SeqVerse_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S") + "_" + parts.joinIntoString ("_") + ".mid";
 }
 
 const char* const stateTag = "SeqVerse";
@@ -495,8 +505,8 @@ void SeqVerseProcessor::writeTake()
     const auto ticks = [] (double beats) { return beats * take::kTicksPerQuarter; };
 
     juce::MidiMessageSequence sequence;
-    sequence.addEvent (juce::MidiMessage::tempoMetaEvent (juce::roundToInt (60.0e6 / current.bpm)));
-    sequence.addEvent (juce::MidiMessage::timeSignatureMetaEvent (current.tsigNumerator, current.tsigDenominator));
+    // Only notes and the end of track, no tempo or time signature: with them Bitwig asks whether to import them when
+    // the file is dropped. The ticks are still 960 to the quarter, so the notes land on the same beats.
 
     bool sounding[16][128] = {};
     for (int i = 0; i < current.count; ++i)
@@ -545,7 +555,7 @@ void SeqVerseProcessor::writeTake()
         // that has been renamed or moved out is safe.
         struct Written { std::filesystem::file_time_type time; juce::File file; };
         std::vector<Written> takes; // the modification time of juce::File is only exact to the second
-        for (const auto& candidate : folder.findChildFiles (juce::File::findFiles, false, "SeqVerse *.mid"))
+        for (const auto& candidate : folder.findChildFiles (juce::File::findFiles, false, "SeqVerse_*.mid"))
         {
             std::error_code ignored;
             takes.push_back ({ std::filesystem::last_write_time (candidate.getFullPathName().toStdString(), ignored), candidate });

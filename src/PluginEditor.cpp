@@ -1,6 +1,11 @@
 #include "PluginEditor.h"
 #include "Music.h"
 
+// Set by CMake (the project version); the fallback only matters for a build made without CMake
+#ifndef SEQVERSE_VERSION
+ #define SEQVERSE_VERSION "dev"
+#endif
+
 namespace
 {
 constexpr int kMargin = 16;
@@ -280,7 +285,7 @@ void SeqVerseEditor::setUpToggle (Toggle& toggle, const juce::String& text, juce
 void SeqVerseEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-    look.drawHeader (g, header);
+    look.drawHeader (g, header, SEQVERSE_VERSION);
     for (const auto& panel : panels)
         look.drawPanel (g, panel.area, panel.heading, kPadding, kHeadingHeight);
 }

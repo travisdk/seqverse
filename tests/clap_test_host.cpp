@@ -250,13 +250,20 @@ void clearTakes()
         std::filesystem::remove (entry.path(), ignored);
 }
 
-// The files that are named like a take, "SeqVerse ... .mid"
+// A take's name must survive an unencoded file:// URI, which is how JUCE's X11 drag sends it: letters, digits, "-" and "_"
+// (and the one dot of ".mid") only
+bool onlySafeCharacters (const std::string& name)
+{
+    return std::regex_match (name, std::regex ("[A-Za-z0-9_-]+\\.mid"));
+}
+
+// The files that are named like a take, "SeqVerse_... .mid"
 std::vector<std::filesystem::path> takeFiles()
 {
     std::vector<std::filesystem::path> files;
     std::error_code ignored;
     for (const auto& entry : std::filesystem::directory_iterator (takeFolder, ignored))
-        if (entry.path().extension() == ".mid" && entry.path().filename().string().rfind ("SeqVerse ", 0) == 0)
+        if (entry.path().extension() == ".mid" && entry.path().filename().string().rfind ("SeqVerse_", 0) == 0)
             files.push_back (entry.path());
     return files;
 }
@@ -1482,8 +1489,8 @@ int main (int argc, char** argv)
         s.numBlocks = 600; // longer than the two bars, which are 375 blocks
         auto take = (run (s), readTake());
         check (take.files == 1 && take.wellFormed, "one MIDI file was written, and it reads back");
-        check (take.division == 960 && take.microsecondsPerQuarter == 500000 && take.tsigNumerator == 4 && take.tsigDenominator == 4,
-               "960 ticks per quarter, 120 BPM and 4/4");
+        check (take.division == 960 && take.microsecondsPerQuarter == 0 && take.tsigNumerator == 0 && take.tsigDenominator == 0,
+               "960 ticks per quarter, and no tempo or time signature in the file (Bitwig would ask whether to import them)");
         check (sameTakeNotes (take.notes, takeGrid (16, 0, 0)), "2 bars: the sixteen notes of the first two bars, as they were played");
         check (endsAtTick (take, 7680), "and the clip ends after exactly two bars");
 
@@ -1549,14 +1556,14 @@ int main (int argc, char** argv)
         s.tsigNumerator = 3;
         s.numBlocks = 500; // 281 blocks are two bars of 3/4
         take = (run (s), readTake());
-        check (sameTakeNotes (take.notes, takeGrid (12, 0, 0)) && endsAtTick (take, 5760) && take.tsigNumerator == 3 && take.tsigDenominator == 4,
-               "3/4: two bars are six beats, and the file says 3/4");
+        check (sameTakeNotes (take.notes, takeGrid (12, 0, 0)) && endsAtTick (take, 5760),
+               "3/4: two bars are six beats");
 
         s.tsigNumerator = 6;
         s.tsigDenominator = 8;
         s.params = { { "Record Bars", "2" } };
         take = (run (s), readTake());
-        check (endsAtTick (take, 5760) && take.tsigNumerator == 6 && take.tsigDenominator == 8, "6/8 is three quarters to the bar too");
+        check (endsAtTick (take, 5760), "6/8 is three quarters to the bar too");
 
         // The notes are kept as they were played: channel and velocity
         s = Scenario();
@@ -1616,15 +1623,16 @@ int main (int argc, char** argv)
         s.params = { { "Record Bars", "1" } };
         s.numBlocks = 300;
         take = (run (s), readTake());
-        const std::regex plain ("SeqVerse [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2} - C Major \\(Ionian\\) - Up - 1-8 - 1 bar\\.mid");
+        const std::regex plain ("SeqVerse_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}_C-Major-Ionian_Up_1-8_1bar\\.mid");
         check (std::regex_match (take.name, plain), "the name: the date and time, then key, scale, direction, step rate and length");
+        check (onlySafeCharacters (take.name), "the name has only letters, digits, - and _ (no space, #, parenthesis)");
 
         s.numBlocks = 500; // two bars are 375 blocks
         s.params = { { "Record Bars", "2" }, { "Key", "F#/Gb" }, { "Scale", "Dorian" }, { "Play Mode", "Random" }, { "Step Rate", "1/16T" },
                      { "Rhythm", "Euclidean" }, { "Pulses", "5" }, { "Pattern Length", "12" } };
         take = (run (s), readTake());
-        check (take.name.find (" - F# Dorian - Random - 1-16T - Euclid 5 in 12 - 2 bars.mid") != std::string::npos && take.name.find ('/') == std::string::npos,
-               "another take: F#, Dorian, Random, triplets, Euclid 5 in 12, 2 bars, and no slash in the name");
+        check (take.name.find ("_Fsharp-Dorian_Random_1-16T_Euclid-5-in-12_2bars.mid") != std::string::npos && onlySafeCharacters (take.name),
+               "another take: F sharp, Dorian, Random, triplets, Euclid 5 in 12, 2 bars, and nothing but letters, digits, - and _ in the name");
 
         s = Scenario();
         s.rawParams = { { "Record", 1 } };
@@ -1632,7 +1640,7 @@ int main (int argc, char** argv)
         s.numBlocks = 300;
         s.stopBlock = 100;
         take = (run (s), readTake());
-        check (take.name.find (" - Up-Down - 1-8 - 0.5 bars.mid") != std::string::npos, "a take that was stopped early says how long it was: 0.5 bars");
+        check (take.name.find ("_Up-Down_1-8_0-5bars.mid") != std::string::npos, "a take that was stopped early says how long it was: 0.5 bars");
 
         // Record is one-shot: it is unarmed again once a take is done, however it ended
         s = Scenario();
