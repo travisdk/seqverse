@@ -82,7 +82,7 @@ target_link_libraries(SeqVerse
 # parameters are still flagged as stepped, so a host may only offer two values of a 43-entry Scale list.
 clap_juce_extensions_plugin(TARGET SeqVerse
     CLAP_ID "com.henrik.seqverse"
-    CLAP_FEATURES instrument note-effect utility
+    CLAP_FEATURES note-effect utility
     CLAP_USE_JUCE_PARAMETER_RANGES ALL)
 
 # Headless CLAP host for scripted tests.
