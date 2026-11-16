@@ -290,6 +290,24 @@ void SeqVerseEditor::paint (juce::Graphics& g)
         look.drawPanel (g, panel.area, panel.heading, kPadding, kHeadingHeight);
 }
 
+void SeqVerseEditor::parentHierarchyChanged()
+{
+   #if JUCE_WINDOWS
+    // Same fix as Progrezzor, SubForge and SpaceForge. The CLAP wrapper (the only one that leaves
+    // wrapperType undefined) scales the editor by the host's set_scale and reports sizes that include
+    // it, but JUCE 8 also scales a window embedded in the host by the host window's DPI. At 125 % the
+    // view came out 1.25 times too big for the host's window and was cropped. Keep the window at 1:1
+    // as the VST3 wrapper does, and push the size to the native window, which addToDesktop created at
+    // the DPI scale.
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Undefined)
+        if (auto* peer = getPeer(); peer != nullptr && ! peer->getCustomPlatformScaleFactor().has_value())
+        {
+            peer->setCustomPlatformScaleFactor (1.0);
+            peer->setBounds (peer->getComponent().getBounds(), false);
+        }
+   #endif
+}
+
 void SeqVerseEditor::resized()
 {
     auto area = getLocalBounds().reduced (kMargin);

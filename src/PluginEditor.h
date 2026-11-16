@@ -44,6 +44,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void parentHierarchyChanged() override;
 
 private:
     // The attachment is declared after the component it drives, so it is destroyed first.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(SeqVerse VERSION 1.1.0 LANGUAGES C CXX)
+project(SeqVerse VERSION 1.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,7 +82,7 @@ target_link_libraries(SeqVerse
 # parameters are still flagged as stepped, so a host may only offer two values of a 43-entry Scale list.
 clap_juce_extensions_plugin(TARGET SeqVerse
     CLAP_ID "com.henrik.seqverse"
-    CLAP_FEATURES note-effect utility
+    CLAP_FEATURES instrument note-effect utility
     CLAP_USE_JUCE_PARAMETER_RANGES ALL)
 
 # Headless CLAP host for scripted tests.
